@@ -1,0 +1,18 @@
+/* The dark ground lives on <html>, not <body>: the live view's video sits in a
+   z-index:-1 layer, which CSS paints above the root background but below a
+   non-positioned <body> background. */
+html {
+    background: #0F1017;
+}
+
+html, body {
+    width: 100%;
+    height: 100%;
+    margin: 0;
+    padding: 0;
+    overflow: hidden;
+}
+
+body {
+    background: transparent;
+}
