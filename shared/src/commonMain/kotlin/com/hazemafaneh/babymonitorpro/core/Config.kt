@@ -34,7 +34,6 @@ data class CameraEndpoint(
     val name: String,
     val host: String,
     val port: Int = Bmp.DEFAULT_PORT,
-    val pinRequired: Boolean = false,
     val source: Source = Source.MANUAL,
 ) {
     enum class Source { MDNS, MANUAL, QR }

@@ -12,9 +12,12 @@ object Bmp {
 
     const val DEEP_LINK_SCHEME = "bmpro"
 
-    const val PIN_HEADER = "X-BMPro-Pin"
-    const val PIN_QUERY_PARAM = "pin"
-    const val PIN_LENGTH = 6
+    /**
+     * `audio=1` on a deep link opens the live view with sound already on. Only set on the
+     * link inside an alert notification: the app heard something, so the parent tapping it
+     * wants to hear it too.
+     */
+    const val AUDIO_QUERY_PARAM = "audio"
 
     const val MJPEG_BOUNDARY = "frame"
     const val MJPEG_CONTENT_TYPE = "multipart/x-mixed-replace; boundary=$MJPEG_BOUNDARY"
@@ -26,6 +29,5 @@ object Bmp {
 
     /** TXT record key carrying the human-readable device name. */
     const val TXT_NAME = "name"
-    const val TXT_PIN = "pin"
     const val TXT_VERSION = "v"
 }

@@ -7,4 +7,8 @@ import androidx.compose.ui.Modifier
 actual val qrScanningSupported: Boolean = false
 
 @Composable
-actual fun QrScanner(modifier: Modifier, onResult: (String) -> Unit) = Unit
+actual fun QrScanner(
+    modifier: Modifier,
+    onResult: (String) -> Unit,
+    onUnavailable: () -> Unit,
+) = Unit

@@ -24,17 +24,18 @@ import kotlinx.coroutines.withContext
 @Composable
 actual fun MjpegVideo(
     endpoint: CameraEndpoint,
-    pin: String?,
     modifier: Modifier,
     onStatus: (VideoStatus) -> Unit,
     onFrame: (Long) -> Unit,
     onError: (String?) -> Unit,
+    onAspectRatio: (Float) -> Unit,
 ) {
     var frame by remember(endpoint.id) { mutableStateOf<ImageBitmap?>(null) }
+    // Held outside the render lambda so the callback fires on a change, not per frame.
+    var lastAspect by remember(endpoint.id) { mutableStateOf(0f) }
 
     MjpegFrameLoop(
         endpoint = endpoint,
-        pin = pin,
         onStatus = onStatus,
         onError = onError,
         onFrame = onFrame,
@@ -44,6 +45,12 @@ actual fun MjpegVideo(
                 false
             } else {
                 frame = decoded
+                val ratio =
+                    if (decoded.height > 0) decoded.width.toFloat() / decoded.height else 0f
+                if (ratio > 0f && ratio != lastAspect) {
+                    lastAspect = ratio
+                    onAspectRatio(ratio)
+                }
                 true
             }
         },

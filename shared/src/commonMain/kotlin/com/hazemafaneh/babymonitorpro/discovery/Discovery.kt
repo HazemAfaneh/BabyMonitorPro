@@ -5,7 +5,7 @@ import kotlinx.coroutines.flow.StateFlow
 
 /** Publishes this camera as `_babymonitorpro._tcp` on the local network. */
 interface CameraAdvertiser {
-    fun start(deviceName: String, port: Int, pinRequired: Boolean)
+    fun start(deviceName: String, port: Int)
     fun stop()
 }
 

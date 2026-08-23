@@ -23,14 +23,14 @@ class DiscoveryTest {
         val browser = createBrowser() ?: return@runBlocking
 
         try {
-            advertiser.start(deviceName = DEVICE_NAME, port = 18_090, pinRequired = true)
+            advertiser.start(deviceName = DEVICE_NAME, port = 18_090)
             browser.start()
 
             // JmDNS can report a service before its TXT record has been resolved, so wait
             // for the fully resolved entry rather than the first sighting.
             val found = withTimeoutOrNull(TIMEOUT_MILLIS) {
                 browser.cameras.first { cameras ->
-                    cameras.any { it.name == DEVICE_NAME && it.pinRequired }
+                    cameras.any { it.name == DEVICE_NAME }
                 }
             }
 
@@ -41,7 +41,6 @@ class DiscoveryTest {
 
             val camera = found.single { it.name == DEVICE_NAME }
             assertEquals(18_090, camera.port)
-            assertTrue(camera.pinRequired, "the TXT record should carry the PIN flag")
             assertTrue(camera.host.isNotBlank())
             assertEquals(com.hazemafaneh.babymonitorpro.core.CameraEndpoint.Source.MDNS, camera.source)
             assertEquals("_babymonitorpro._tcp", Bmp.SERVICE_TYPE)

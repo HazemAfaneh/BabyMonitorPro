@@ -40,7 +40,7 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
 
-            <!-- bmpro://<ip>:<port>?pin=<pin> from a scanned QR code. -->
+            <!-- bmpro://<ip>:<port> from a scanned QR code. -->
             <intent-filter android:autoVerify="false">
                 <action android:name="android.intent.action.VIEW" />
 

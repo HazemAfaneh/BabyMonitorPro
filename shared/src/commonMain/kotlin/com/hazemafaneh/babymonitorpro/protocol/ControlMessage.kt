@@ -73,7 +73,6 @@ data class DeviceInfoResponse(
     val deviceName: String,
     val role: String = "camera",
     val protocolVersion: Int = com.hazemafaneh.babymonitorpro.core.Bmp.PROTOCOL_VERSION,
-    val pinRequired: Boolean = false,
     val streaming: Boolean = true,
     val videoWidth: Int = 1280,
     val videoHeight: Int = 720,

@@ -8,12 +8,9 @@ import com.hazemafaneh.babymonitorpro.protocol.DeviceInfoResponse
 import com.hazemafaneh.babymonitorpro.protocol.decodeControlMessage
 import com.hazemafaneh.babymonitorpro.protocol.encode
 import io.ktor.http.ContentType
-import io.ktor.http.HttpStatusCode
-import io.ktor.server.application.ApplicationCallPipeline
 import io.ktor.server.application.install
 import io.ktor.server.cio.CIO
 import io.ktor.server.engine.embeddedServer
-import io.ktor.server.request.path
 import io.ktor.server.response.respondBytesWriter
 import io.ktor.server.response.respondText
 import io.ktor.server.routing.get
@@ -24,7 +21,6 @@ import io.ktor.utils.io.writeFully
 import io.ktor.utils.io.writeStringUtf8
 import io.ktor.websocket.Frame
 import io.ktor.websocket.readText
-import kotlin.concurrent.Volatile
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.channels.consumeEach
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -54,18 +50,13 @@ class BroadcastServer(
     private var engine: io.ktor.server.engine.EmbeddedServer<*, *>? = null
     private val viewers = MutableStateFlow(0)
 
-    @Volatile
-    private var pin: String? = null
-
     val running: Boolean get() = engine != null
 
-    fun start(port: Int, pin: String?) {
+    fun start(port: Int) {
         if (engine != null) return
-        this.pin = pin?.takeIf { it.isNotBlank() }
 
         engine = embeddedServer(CIO, port = port, host = BIND_ALL_INTERFACES) {
             install(WebSockets)
-            installPinCheck()
 
             routing {
                 get(Bmp.PATH_INFO) {
@@ -136,25 +127,6 @@ class BroadcastServer(
         engine = null
         viewers.value = 0
         onViewerCountChanged(0)
-    }
-
-    private fun io.ktor.server.application.Application.installPinCheck() {
-        intercept(ApplicationCallPipeline.Plugins) {
-            val required = pin ?: return@intercept
-            val currentCall = context
-            // The web viewer renders the stream in an <img> tag, which cannot set headers,
-            // so the PIN is accepted as a query parameter too. Documented in PROTOCOL.md.
-            val provided = currentCall.request.headers[Bmp.PIN_HEADER]
-                ?: currentCall.request.queryParameters[Bmp.PIN_QUERY_PARAM]
-            if (provided != required) {
-                currentCall.respondText(
-                    text = """{"error":"pin_required","path":"${currentCall.request.path()}"}""",
-                    contentType = ContentType.Application.Json,
-                    status = HttpStatusCode.Unauthorized,
-                )
-                finish()
-            }
-        }
     }
 
     private inline fun trackViewer(block: () -> Unit) {

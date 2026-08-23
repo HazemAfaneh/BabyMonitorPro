@@ -5,7 +5,10 @@ import android.graphics.Color
 import android.view.ViewGroup
 import android.widget.ImageView
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.viewinterop.AndroidView
@@ -23,13 +26,15 @@ import kotlinx.coroutines.withContext
 @Composable
 actual fun MjpegVideo(
     endpoint: CameraEndpoint,
-    pin: String?,
     modifier: Modifier,
     onStatus: (VideoStatus) -> Unit,
     onFrame: (Long) -> Unit,
     onError: (String?) -> Unit,
+    onAspectRatio: (Float) -> Unit,
 ) {
     val context = LocalContext.current
+    // Held outside the render lambda so the callback fires on a change, not per frame.
+    var lastAspect by remember(endpoint.id) { mutableStateOf(0f) }
     val imageView = remember(endpoint.id) {
         ImageView(context).apply {
             scaleType = ImageView.ScaleType.FIT_CENTER
@@ -43,7 +48,6 @@ actual fun MjpegVideo(
 
     MjpegFrameLoop(
         endpoint = endpoint,
-        pin = pin,
         onStatus = onStatus,
         onError = onError,
         onFrame = onFrame,
@@ -55,6 +59,12 @@ actual fun MjpegVideo(
                 false
             } else {
                 withContext(Dispatchers.Main) { imageView.setImageBitmap(bitmap) }
+                val ratio =
+                    if (bitmap.height > 0) bitmap.width.toFloat() / bitmap.height else 0f
+                if (ratio > 0f && ratio != lastAspect) {
+                    lastAspect = ratio
+                    onAspectRatio(ratio)
+                }
                 true
             }
         },

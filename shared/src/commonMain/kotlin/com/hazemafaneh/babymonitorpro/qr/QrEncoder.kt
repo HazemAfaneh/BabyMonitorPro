@@ -3,8 +3,8 @@ package com.hazemafaneh.babymonitorpro.qr
 /**
  * A small QR encoder — byte mode, error-correction level L, versions 1 to 5.
  *
- * That range covers every pairing URI the app produces (`bmpro://255.255.255.255:65535?pin=123456`
- * is 44 bytes; version 5 holds 108), and staying inside single-block versions keeps the
+ * That range covers every pairing URI the app produces (`bmpro://255.255.255.255:65535` is
+ * 30 bytes; version 5 holds 108), and staying inside single-block versions keeps the
  * Reed-Solomon step free of interleaving. Longer input returns null rather than a wrong code.
  *
  * Written by hand rather than pulled in as a dependency: the app needs one 40-byte code on

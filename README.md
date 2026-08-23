@@ -143,10 +143,10 @@ drawing controls that the picture would cover.
 Video and audio travel directly between your own devices over your own WiFi. There is no
 account, no cloud relay, no recording and no analytics. The camera binds to the local
 network interface so other devices can reach it; the app never forwards a port and never
-opens a connection to the internet. The optional 6-digit PIN keeps other people on the same
-WiFi from opening the stream — it is access control, not encryption.
+opens a connection to the internet. There is no access control: any device on the same WiFi
+that knows the address can open the stream.
 
 ## Not in v1
 
-Cloud relay, accounts, recording and playback, two-way talk, encryption beyond the PIN,
+Cloud relay, accounts, recording and playback, two-way talk, access control, encryption,
 cry classification, multi-camera grid. The code is structured so these are additive.

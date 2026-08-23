@@ -1,16 +1,13 @@
 package com.hazemafaneh.babymonitorpro.core
 
 /**
- * `bmpro://<host>:<port>?pin=<pin>` — what the camera screen encodes into its QR code
- * and what the viewer's scanner (or a deep link) parses back out.
+ * `bmpro://<host>:<port>` — what the camera screen encodes into its QR code and what the
+ * viewer's scanner (or a deep link) parses back out.
  */
 object PairingUri {
 
-    fun build(host: String, port: Int = Bmp.DEFAULT_PORT, pin: String? = null): String =
-        buildString {
-            append(Bmp.DEEP_LINK_SCHEME).append("://").append(host).append(':').append(port)
-            if (!pin.isNullOrBlank()) append('?').append(Bmp.PIN_QUERY_PARAM).append('=').append(pin)
-        }
+    fun build(host: String, port: Int = Bmp.DEFAULT_PORT): String =
+        "${Bmp.DEEP_LINK_SCHEME}://$host:$port"
 
     /** Returns null when [uri] is not a well-formed pairing link. */
     fun parse(uri: String): Parsed? {
@@ -21,15 +18,9 @@ object PairingUri {
         val body = trimmed.removeRange(0, prefix.length)
         val queryIndex = body.indexOf('?')
         val authority = if (queryIndex >= 0) body.substring(0, queryIndex) else body
-        val query = if (queryIndex >= 0) body.substring(queryIndex + 1) else ""
 
         val hostPort = parseHostPort(authority) ?: return null
-        val pin = query.split('&')
-            .firstOrNull { it.startsWith("${Bmp.PIN_QUERY_PARAM}=") }
-            ?.substringAfter('=')
-            ?.takeIf { it.isNotBlank() }
-
-        return Parsed(hostPort.first, hostPort.second, pin)
+        return Parsed(hostPort.first, hostPort.second)
     }
 
     /** Accepts `host`, `host:port`, or a bare IPv4 — used by the manual-entry row. */
@@ -46,5 +37,5 @@ object PairingUri {
         return if (host.isEmpty()) null else host to port
     }
 
-    data class Parsed(val host: String, val port: Int, val pin: String?)
+    data class Parsed(val host: String, val port: Int)
 }

@@ -32,10 +32,12 @@ actual val qrScanningSupported: Boolean = true
 actual fun QrScanner(
     modifier: Modifier,
     onResult: (String) -> Unit,
+    onUnavailable: () -> Unit,
 ) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
     val currentOnResult by rememberUpdatedState(onResult)
+    val currentOnUnavailable by rememberUpdatedState(onUnavailable)
 
     val previewView = remember { PreviewView(context) }
     val executor = remember { Executors.newSingleThreadExecutor() }
@@ -65,6 +67,10 @@ actual fun QrScanner(
                 preview,
                 analysis,
             )
+        }.onFailure {
+            // A refused CAMERA permission surfaces as a bind failure and nothing else, so
+            // this is the only place the screen can learn the viewfinder will stay black.
+            currentOnUnavailable()
         }
     }
 

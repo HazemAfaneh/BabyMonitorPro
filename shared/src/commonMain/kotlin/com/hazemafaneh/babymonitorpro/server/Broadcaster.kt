@@ -3,6 +3,7 @@ package com.hazemafaneh.babymonitorpro.server
 import com.hazemafaneh.babymonitorpro.core.AudioConfig
 import com.hazemafaneh.babymonitorpro.core.Bmp
 import com.hazemafaneh.babymonitorpro.core.CaptureConfig
+import com.hazemafaneh.babymonitorpro.core.isLinkLocalIpv4
 import com.hazemafaneh.babymonitorpro.protocol.ControlMessage
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.StateFlow
@@ -10,8 +11,6 @@ import kotlinx.coroutines.flow.StateFlow
 data class BroadcastConfig(
     val deviceName: String,
     val port: Int = Bmp.DEFAULT_PORT,
-    /** Null or blank disables the PIN check entirely — off by default, per spec. */
-    val pin: String? = null,
     val capture: CaptureConfig = CaptureConfig(),
     val audio: AudioConfig = AudioConfig(),
     /** Set when no camera is available (or for development) — draws a test pattern. */
@@ -37,7 +36,16 @@ data class BroadcastState(
     val soundSensitivity: Int = 50,
     val lastError: String? = null,
 ) {
-    val primaryAddress: String? get() = addresses.firstOrNull()
+    /**
+     * The address the pairing card offers, or null when there is nothing worth offering yet.
+     *
+     * Link-local 169.254 addresses are filtered out rather than merely ranked last.
+     * [isPrivateIpv4] accepts them — they are private — but nothing on the WiFi can reach
+     * one, so printing it hands the viewer an address that can only ever refuse the
+     * connection, and the camera takes the blame for a self-assigned address the router
+     * never issued.
+     */
+    val primaryAddress: String? get() = addresses.firstOrNull { !isLinkLocalIpv4(it) }
 }
 
 /**

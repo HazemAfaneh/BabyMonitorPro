@@ -1,5 +1,6 @@
 package com.hazemafaneh.babymonitorpro.notify
 
+import com.hazemafaneh.babymonitorpro.core.CameraEndpoint
 import java.awt.SystemTray
 import java.awt.Toolkit
 import java.awt.TrayIcon
@@ -15,8 +16,10 @@ private val trayIcon: TrayIcon? by lazy {
     }.getOrNull()
 }
 
-actual fun notifyAlert(cameraName: String, message: String) {
+// A tray balloon cannot carry a deep link back into the window, so the endpoint is used
+// only for its name here; the desktop viewer is already on screen when this fires.
+actual fun notifyAlert(endpoint: CameraEndpoint, message: String) {
     runCatching {
-        trayIcon?.displayMessage(cameraName, message, TrayIcon.MessageType.INFO)
+        trayIcon?.displayMessage(endpoint.name, message, TrayIcon.MessageType.INFO)
     }
 }

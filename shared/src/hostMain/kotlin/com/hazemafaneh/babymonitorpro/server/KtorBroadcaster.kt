@@ -116,8 +116,8 @@ class KtorBroadcaster : Broadcaster {
             }
         }
 
-        server.start(config.port, config.pin)
-        advertiser?.start(config.deviceName, config.port, !config.pin.isNullOrBlank())
+        server.start(config.port)
+        advertiser?.start(config.deviceName, config.port)
         PlatformBroadcastSession.begin(config.deviceName)
 
         _state.value = BroadcastState(
@@ -144,7 +144,7 @@ class KtorBroadcaster : Broadcaster {
      */
     private suspend fun verifyListening(config: BroadcastConfig) {
         val endpoint = CameraEndpoint(name = config.deviceName, host = LOOPBACK, port = config.port)
-        val probe = ViewerClient(endpoint, config.pin)
+        val probe = ViewerClient(endpoint)
         try {
             val deadline = nowMillis() + SELF_CHECK_TIMEOUT_MILLIS
             while (nowMillis() < deadline) {
@@ -255,7 +255,6 @@ class KtorBroadcaster : Broadcaster {
         val current = config
         return DeviceInfoResponse(
             deviceName = current?.deviceName ?: "Camera",
-            pinRequired = !current?.pin.isNullOrBlank(),
             streaming = _state.value.running,
             videoWidth = current?.capture?.width ?: 1280,
             videoHeight = current?.capture?.height ?: 720,

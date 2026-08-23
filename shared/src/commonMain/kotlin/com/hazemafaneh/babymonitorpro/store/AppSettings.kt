@@ -16,14 +16,6 @@ class AppSettings(private val store: KeyValueStore) {
         get() = store.getString(KEY_DEVICE_NAME)?.takeIf { it.isNotBlank() } ?: defaultDeviceName()
         set(value) = store.putString(KEY_DEVICE_NAME, value)
 
-    var pinEnabled: Boolean
-        get() = store.getBoolean(KEY_PIN_ENABLED, false)
-        set(value) = store.putBoolean(KEY_PIN_ENABLED, value)
-
-    var pin: String
-        get() = store.getString(KEY_PIN).orEmpty()
-        set(value) = store.putString(KEY_PIN, value)
-
     var motionSensitivity: Int
         get() = store.getInt(KEY_MOTION, 50)
         set(value) = store.putInt(KEY_MOTION, value.coerceIn(0, 100))
@@ -43,8 +35,6 @@ class AppSettings(private val store: KeyValueStore) {
     private companion object {
         const val KEY_ROLE = "role"
         const val KEY_DEVICE_NAME = "device_name"
-        const val KEY_PIN_ENABLED = "pin_enabled"
-        const val KEY_PIN = "pin"
         const val KEY_MOTION = "motion_sensitivity"
         const val KEY_SOUND = "sound_sensitivity"
         const val KEY_NIGHT_MODE = "night_mode"
