@@ -35,6 +35,11 @@ import platform.AVFoundation.AVCaptureOutput
 import platform.AVFoundation.AVCaptureSession
 import platform.AVFoundation.AVCaptureSessionPreset1280x720
 import platform.AVFoundation.AVCaptureVideoDataOutput
+import platform.AVFoundation.AVCaptureVideoOrientation
+import platform.AVFoundation.AVCaptureVideoOrientationLandscapeLeft
+import platform.AVFoundation.AVCaptureVideoOrientationLandscapeRight
+import platform.AVFoundation.AVCaptureVideoOrientationPortrait
+import platform.AVFoundation.AVCaptureVideoOrientationPortraitUpsideDown
 import platform.AVFoundation.AVCaptureVideoDataOutputSampleBufferDelegateProtocol
 import platform.AVFoundation.AVMediaTypeVideo
 import platform.AVFoundation.AVCaptureDeviceTypeBuiltInWideAngleCamera
@@ -51,6 +56,8 @@ import platform.CoreMedia.CMTimeMake
 import platform.CoreMedia.CMSampleBufferRef
 import platform.Foundation.NSData
 import platform.Foundation.NSNumber
+import platform.UIKit.UIDevice
+import platform.UIKit.UIDeviceOrientation
 import platform.ImageIO.kCGImageDestinationLossyCompressionQuality
 import platform.darwin.NSObject
 import platform.darwin.dispatch_async
@@ -82,6 +89,7 @@ actual class CameraController actual constructor(private val config: CaptureConf
     private var device: AVCaptureDevice? = null
     private var useFront = config.useFrontCamera
     private var lastEmittedAt = 0L
+    private var orientation: AVCaptureVideoOrientation = AVCaptureVideoOrientationPortrait
 
     /**
      * The camera is pinned to the configured rate (see [applyFrameRate]), but delivery
@@ -120,6 +128,12 @@ actual class CameraController actual constructor(private val config: CaptureConf
     // broadcast, restarting it after a PIN change), and on the main thread that is a visible
     // freeze of the whole app, Compose included.
     actual suspend fun start() = withContext(Dispatchers.Default) {
+        // Read on the main thread, where UIKit insists device orientation is read, and then
+        // held for the life of the broadcast. A nursery camera is put down in one position
+        // and left there; a stream that reorients itself because somebody nudged the phone
+        // is worse than one that keeps the framing it was set up with.
+        orientation = withContext(Dispatchers.Main) { currentVideoOrientation() }
+
         // One transaction: the session is not asked to re-plumb itself once per line.
         session.beginConfiguration()
         session.sessionPreset = AVCaptureSessionPreset1280x720
@@ -128,6 +142,7 @@ actual class CameraController actual constructor(private val config: CaptureConf
         output.setSampleBufferDelegate(delegate, queue)
         output.alwaysDiscardsLateVideoFrames = true
         if (session.canAddOutput(output)) session.addOutput(output)
+        applyOrientation()
         session.commitConfiguration()
 
         // After commit, not before: committing can pick a different active format, and the
@@ -155,6 +170,7 @@ actual class CameraController actual constructor(private val config: CaptureConf
             session.beginConfiguration()
             input?.let { session.removeInput(it) }
             attachInput()
+            applyOrientation()
             session.commitConfiguration()
             device?.let(::applyFrameRate)
         }
@@ -169,6 +185,45 @@ actual class CameraController actual constructor(private val config: CaptureConf
             current.unlockForConfiguration()
         }
     }
+
+    /**
+     * Rotates the delivered buffers to match how the phone is being held.
+     *
+     * Without this the frames arrive in the sensor's own orientation — landscape, with no
+     * regard for the device — so a phone stood upright in a nursery streams a picture lying
+     * on its side. Android has always corrected for this by rotating each bitmap by the
+     * analyser's `rotationDegrees`; iOS was sending whatever the camera handed over.
+     *
+     * Setting it on the connection means the rotation happens before the frame reaches this
+     * code, so nothing downstream has to know about orientation at all.
+     */
+    private fun applyOrientation() {
+        val connection = output.connectionWithMediaType(AVMediaTypeVideo ?: "vide") ?: return
+        if (!connection.isVideoOrientationSupported()) return
+        connection.videoOrientation = orientation
+    }
+
+    /**
+     * Device orientation, not interface orientation: the app can be locked to portrait while
+     * the phone itself is on its side, and it is the phone the camera is bolted to.
+     *
+     * The landscape cases cross over on purpose. `LandscapeLeft` describes which way the
+     * device was rotated; `AVCaptureVideoOrientationLandscapeRight` describes which way the
+     * image has to be turned to compensate, and those are opposites.
+     */
+    private fun currentVideoOrientation(): AVCaptureVideoOrientation =
+        when (UIDevice.currentDevice.orientation) {
+            UIDeviceOrientation.UIDeviceOrientationLandscapeLeft ->
+                AVCaptureVideoOrientationLandscapeRight
+            UIDeviceOrientation.UIDeviceOrientationLandscapeRight ->
+                AVCaptureVideoOrientationLandscapeLeft
+            UIDeviceOrientation.UIDeviceOrientationPortraitUpsideDown ->
+                AVCaptureVideoOrientationPortraitUpsideDown
+            // Face up, face down and unknown all land here. A phone flat on a table has no
+            // meaningful camera orientation, and portrait is the one a parent propping it
+            // against a cot will have been holding a moment earlier.
+            else -> AVCaptureVideoOrientationPortrait
+        }
 
     /**
      * Caps the sensor at the streaming rate instead of letting it run at 30 fps only for the

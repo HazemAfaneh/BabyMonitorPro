@@ -22,18 +22,23 @@ actual fun rememberCapturePermissions(): CapturePermissions {
 
     var camera by remember { mutableStateOf(granted(Manifest.permission.CAMERA)) }
     var microphone by remember { mutableStateOf(granted(Manifest.permission.RECORD_AUDIO)) }
+    // A denial is an answer too, so this is not the same as both being granted: without it
+    // a permanently denied microphone would leave the screen waiting forever.
+    var answered by remember { mutableStateOf(false) }
 
     val launcher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions(),
     ) { result ->
         camera = result[Manifest.permission.CAMERA] ?: camera
         microphone = result[Manifest.permission.RECORD_AUDIO] ?: microphone
+        answered = true
     }
 
-    return remember(camera, microphone) {
+    return remember(camera, microphone, answered) {
         object : CapturePermissions {
             override val cameraGranted = camera
             override val microphoneGranted = microphone
+            override val resolved = answered || (camera && microphone)
             override fun request() {
                 val requested = buildList {
                     add(Manifest.permission.CAMERA)

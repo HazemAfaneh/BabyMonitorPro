@@ -5,6 +5,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
@@ -39,6 +40,11 @@ import kotlinx.coroutines.withContext
  * worse than the disease. The picture is also a 16:9 thumbnail rather than a full screen, so
  * the Skia path has room to spare.
  *
+ * [onAspectRatio] reports the shape of the decoded frame, because the caller cannot know it
+ * in advance: a phone held portrait produces a portrait stream, and a box sized for
+ * landscape crops that to a band across the middle — which looks far more like a rotation
+ * fault than like cropping. Size the container from this instead of assuming.
+ *
  * [frames] may be null where the platform cannot broadcast at all; the placeholder stays.
  */
 @Composable
@@ -46,17 +52,28 @@ internal fun JpegFrameView(
     frames: Flow<ByteArray>?,
     contentDescription: String,
     modifier: Modifier = Modifier,
-    contentScale: ContentScale = ContentScale.Crop,
+    contentScale: ContentScale = ContentScale.Fit,
+    onAspectRatio: (Float) -> Unit = {},
     placeholder: @Composable () -> Unit = {},
 ) {
     var frame by remember(frames) { mutableStateOf<ImageBitmap?>(null) }
+    val reportAspect by rememberUpdatedState(onAspectRatio)
 
     LaunchedEffect(frames) {
         val source = frames ?: return@LaunchedEffect
+        // Held here rather than in state: the shape changes once, when the first frame
+        // lands, and putting it in state would recompose this on every frame to no purpose.
+        var lastAspect = 0f
         // The source drops frames for a slow collector rather than queueing them, so a
         // decode that cannot keep up falls behind in rate, never in time.
         source.collect { jpeg ->
-            withContext(Dispatchers.Default) { decodeJpegFrame(jpeg) }?.let { frame = it }
+            val decoded = withContext(Dispatchers.Default) { decodeJpegFrame(jpeg) } ?: return@collect
+            frame = decoded
+            val aspect = if (decoded.height > 0) decoded.width.toFloat() / decoded.height else 0f
+            if (aspect > 0f && aspect != lastAspect) {
+                lastAspect = aspect
+                reportAspect(aspect)
+            }
         }
     }
 
