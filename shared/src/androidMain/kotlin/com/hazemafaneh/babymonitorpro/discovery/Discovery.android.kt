@@ -24,14 +24,13 @@ private class NsdAdvertiser(private val manager: NsdManager) : CameraAdvertiser 
 
     private var listener: NsdManager.RegistrationListener? = null
 
-    override fun start(deviceName: String, port: Int, pinRequired: Boolean) {
+    override fun start(deviceName: String, port: Int) {
         stop()
         val info = NsdServiceInfo().apply {
             serviceName = deviceName.ifBlank { "BabyMonitor Pro" }
             serviceType = Bmp.SERVICE_TYPE
             setPort(port)
             setAttribute(Bmp.TXT_NAME, deviceName)
-            setAttribute(Bmp.TXT_PIN, if (pinRequired) "1" else "0")
             setAttribute(Bmp.TXT_VERSION, Bmp.PROTOCOL_VERSION.toString())
         }
 
@@ -103,13 +102,10 @@ private class NsdBrowser(private val manager: NsdManager) : CameraBrowser {
                     val name = attributes[Bmp.TXT_NAME]?.decodeToString()
                         ?: resolved.serviceName
                         ?: host
-                    val pinRequired = attributes[Bmp.TXT_PIN]?.decodeToString() == "1"
-
                     val endpoint = CameraEndpoint(
                         name = name,
                         host = host,
                         port = resolved.port,
-                        pinRequired = pinRequired,
                         source = CameraEndpoint.Source.MDNS,
                     )
                     _cameras.update { list ->

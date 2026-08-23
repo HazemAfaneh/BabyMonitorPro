@@ -4,7 +4,6 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.remember
-import com.hazemafaneh.babymonitorpro.client.CameraHttpException
 import com.hazemafaneh.babymonitorpro.client.ViewerClient
 import com.hazemafaneh.babymonitorpro.core.CameraEndpoint
 import com.hazemafaneh.babymonitorpro.core.nowMillis
@@ -27,13 +26,12 @@ import kotlinx.coroutines.launch
 @Composable
 internal fun MjpegFrameLoop(
     endpoint: CameraEndpoint,
-    pin: String?,
     onStatus: (VideoStatus) -> Unit,
     onError: (String?) -> Unit,
     onFrame: (Long) -> Unit,
     render: suspend (ByteArray) -> Boolean,
 ) {
-    val client = remember(endpoint.id, pin) { ViewerClient(endpoint, pin) }
+    val client = remember(endpoint.id) { ViewerClient(endpoint) }
 
     DisposableEffect(client) {
         onDispose { client.close() }
@@ -83,10 +81,13 @@ internal fun MjpegFrameLoop(
             if (outcome.isFailure) {
                 val cause = outcome.exceptionOrNull()
                 onStatus(
-                    if (cause is CameraHttpException && cause.unauthorized) {
-                        VideoStatus.UNAUTHORIZED
-                    } else {
-                        VideoStatus.FAILED
+                    when {
+                        // The connection is up and the camera is answering; it is the
+                        // pictures that stopped. Reported apart from a dead connection so
+                        // the parent is not sent to check their WiFi over a working one.
+                        cause is StalledStreamException ||
+                            cause is UndecodableStreamException -> VideoStatus.NO_VIDEO
+                        else -> VideoStatus.FAILED
                     },
                 )
                 onError(cause?.message ?: cause?.toString() ?: "Unknown error")
@@ -102,11 +103,11 @@ internal fun MjpegFrameLoop(
 /** Native targets draw frames into their own view, layered with the Compose surface. */
 actual val videoRendersBehindUi: Boolean = false
 
-private class StalledStreamException : Exception(
+internal class StalledStreamException : Exception(
     "Connected, but the camera sent no video. Check the camera screen is still open.",
 )
 
-private class UndecodableStreamException(received: Int) : Exception(
+internal class UndecodableStreamException(received: Int) : Exception(
     "Received $received frames from the camera but none could be decoded.",
 )
 

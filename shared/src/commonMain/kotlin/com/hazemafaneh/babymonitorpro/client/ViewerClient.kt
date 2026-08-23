@@ -7,11 +7,9 @@ import com.hazemafaneh.babymonitorpro.protocol.ControlMessage
 import com.hazemafaneh.babymonitorpro.protocol.DeviceInfoResponse
 import com.hazemafaneh.babymonitorpro.protocol.decodeControlMessage
 import com.hazemafaneh.babymonitorpro.protocol.encode
-import io.ktor.client.HttpClient
 import io.ktor.client.plugins.websocket.WebSockets
 import io.ktor.client.plugins.websocket.webSocket
 import io.ktor.client.request.get
-import io.ktor.client.request.header
 import io.ktor.client.request.prepareGet
 import io.ktor.client.statement.HttpResponse
 import io.ktor.client.statement.bodyAsChannel
@@ -36,23 +34,17 @@ import kotlinx.coroutines.launch
  */
 class ViewerClient(
     private val endpoint: CameraEndpoint,
-    private val pin: String? = null,
 ) {
     // expectSuccess stays off so the status can be turned into a message a parent can act
-    // on ("PIN required") rather than Ktor's generic client exception. Every call site has
-    // to check the status itself — see [requireSuccess].
-    private val client = HttpClient {
+    // on rather than Ktor's generic client exception. Every call site has to check the
+    // status itself — see [requireSuccess].
+    private val client = cameraHttpClient {
         install(WebSockets)
         expectSuccess = false
     }
 
-    private val query: String
-        get() = if (pin.isNullOrBlank()) "" else "?${Bmp.PIN_QUERY_PARAM}=$pin"
-
     suspend fun fetchInfo(): DeviceInfoResponse {
-        val response = client.get("${endpoint.baseUrl}${Bmp.PATH_INFO}$query") {
-            pin?.let { header(Bmp.PIN_HEADER, it) }
-        }
+        val response = client.get("${endpoint.baseUrl}${Bmp.PATH_INFO}")
         response.requireSuccess()
         return BmpJson.decodeFromString(DeviceInfoResponse.serializer(), response.bodyAsText())
     }
@@ -72,11 +64,10 @@ class ViewerClient(
         // UPGRADE PATH: a WebRTC PeerConnection would be established here, replacing the
         // multipart read loop; everything downstream still just sees decoded frames.
         val parser = MjpegParser(Bmp.MJPEG_BOUNDARY)
-        client.prepareGet("${endpoint.baseUrl}${Bmp.PATH_STREAM}$query") {
-            pin?.let { header(Bmp.PIN_HEADER, it) }
-        }.execute { response ->
-            // Without this the viewer sits on a 401 body forever: no boundary ever arrives,
-            // so the parser yields no frames and the screen stays black with no explanation.
+        client.prepareGet("${endpoint.baseUrl}${Bmp.PATH_STREAM}").execute { response ->
+            // Without this the viewer sits on an error body forever: no boundary ever
+            // arrives, so the parser yields no frames and the screen stays black with no
+            // explanation.
             response.requireSuccess()
             val channel = response.bodyAsChannel()
             val buffer = ByteArray(READ_BUFFER)
@@ -96,7 +87,7 @@ class ViewerClient(
     /** PCM chunks from `/audio`, exactly as captured: 16-bit LE mono 16 kHz. */
     fun audioChunks(): Flow<ByteArray> = channelFlow {
         val downstream = this
-        client.webSocket(urlString = "${wsBase()}${Bmp.PATH_AUDIO}$query") {
+        client.webSocket(urlString = "${wsBase()}${Bmp.PATH_AUDIO}") {
             for (frame in incoming) {
                 if (frame is Frame.Binary) downstream.send(frame.readBytes())
             }
@@ -109,7 +100,7 @@ class ViewerClient(
      */
     fun control(outgoing: Flow<ControlMessage>? = null): Flow<ControlMessage> = channelFlow {
         val downstream = this
-        client.webSocket(urlString = "${wsBase()}${Bmp.PATH_CONTROL}$query") {
+        client.webSocket(urlString = "${wsBase()}${Bmp.PATH_CONTROL}") {
             send(Frame.Text(ControlMessage.Hello(viewerName = "viewer").encode()))
 
             val sender = outgoing?.let { source ->
@@ -146,11 +137,9 @@ class ViewerClient(
  * path is a cold flow the caller collects — there is nowhere else to put the status.
  */
 class CameraHttpException(val statusCode: Int) : Exception(describe(statusCode)) {
-    val unauthorized: Boolean get() = statusCode == HttpStatusCode.Unauthorized.value
 
     private companion object {
         fun describe(status: Int): String = when (status) {
-            HttpStatusCode.Unauthorized.value -> "The camera requires a PIN"
             HttpStatusCode.NotFound.value -> "That address is not a BabyMonitor Pro camera"
             else -> "The camera answered with HTTP $status"
         }

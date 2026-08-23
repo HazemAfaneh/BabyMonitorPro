@@ -8,13 +8,14 @@ package com.hazemafaneh.babymonitorpro.client
  *
  * Two wire shapes arrive in practice, so the parser sniffs which one it is looking at:
  *
- *  - **Multipart**, the actual protocol: `--frame` plus per-part headers. What a raw
- *    socket delivers, so this is what Android and desktop see.
- *  - **Bare concatenated JPEGs**, with the framing already gone. Apple's CFNetwork parses
- *    `multipart/x-mixed-replace` itself and hands each part up as its own response body,
- *    so every iOS client — Ktor's Darwin engine included — receives the JPEG payloads
- *    back-to-back with no boundary and no `Content-Length` anywhere. Scanning for `--frame`
- *    in that stream finds nothing, which is a black picture rather than a visible error.
+ *  - **Multipart**, the actual protocol: `--frame` plus per-part headers. Every client
+ *    reads a raw socket (see `cameraHttpClient`), so this is the normal path on all
+ *    platforms.
+ *  - **Bare concatenated JPEGs**, with the framing already gone. Some HTTP stacks parse
+ *    `multipart/x-mixed-replace` themselves and hand each part up as its own body — Apple's
+ *    CFNetwork does, which is what the iOS viewer used to go through. Scanning for `--frame`
+ *    in such a stream finds nothing, which is a black picture rather than a visible error,
+ *    so the shape is still recognised and handled.
  */
 class MjpegParser(boundary: String = "frame") {
 

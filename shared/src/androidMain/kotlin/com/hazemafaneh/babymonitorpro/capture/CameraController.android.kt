@@ -4,6 +4,7 @@ import android.Manifest
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.graphics.Matrix
+import android.util.Size
 import android.media.AudioFormat
 import android.media.AudioRecord
 import android.media.MediaRecorder
@@ -12,6 +13,9 @@ import androidx.camera.core.Camera
 import androidx.camera.core.CameraSelector
 import androidx.camera.core.ImageAnalysis
 import androidx.camera.core.ImageProxy
+import androidx.camera.core.resolutionselector.AspectRatioStrategy
+import androidx.camera.core.resolutionselector.ResolutionSelector
+import androidx.camera.core.resolutionselector.ResolutionStrategy
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.Lifecycle
@@ -101,6 +105,23 @@ actual class CameraController actual constructor(private val config: CaptureConf
             .setOutputImageFormat(ImageAnalysis.OUTPUT_IMAGE_FORMAT_RGBA_8888)
             // The stream is live: a late frame is worth less than the current one.
             .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
+            // Without this, CaptureConfig's width and height were decoration: ImageAnalysis
+            // with no selector falls back to CameraX's own 640x480 default, so a config
+            // asking for 1280x720 produced a 4:3 frame that every viewer then letterboxed
+            // into a band. NOT_FOUND_FALLBACK_CLOSEST_HIGHER_THEN_LOWER rather than an exact
+            // match, because a device that cannot do exactly this size should give the
+            // nearest thing it can rather than silently revert to the default.
+            .setResolutionSelector(
+                ResolutionSelector.Builder()
+                    .setAspectRatioStrategy(AspectRatioStrategy.RATIO_16_9_FALLBACK_AUTO_STRATEGY)
+                    .setResolutionStrategy(
+                        ResolutionStrategy(
+                            Size(config.width, config.height),
+                            ResolutionStrategy.FALLBACK_RULE_CLOSEST_HIGHER_THEN_LOWER,
+                        ),
+                    )
+                    .build(),
+            )
             .build()
 
         analysis.setAnalyzer(analysisExecutor) { image -> onImage(image) }

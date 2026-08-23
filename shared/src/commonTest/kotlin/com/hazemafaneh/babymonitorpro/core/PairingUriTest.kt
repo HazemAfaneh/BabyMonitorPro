@@ -9,20 +9,19 @@ class PairingUriTest {
 
     @Test
     fun buildsAndParsesTheSameLink() {
-        val uri = PairingUri.build("192.168.1.42", 8080, "123456")
-        assertEquals("bmpro://192.168.1.42:8080?pin=123456", uri)
+        val uri = PairingUri.build("192.168.1.42", 8080)
+        assertEquals("bmpro://192.168.1.42:8080", uri)
 
         val parsed = PairingUri.parse(uri)
         assertEquals("192.168.1.42", parsed?.host)
         assertEquals(8080, parsed?.port)
-        assertEquals("123456", parsed?.pin)
     }
 
     @Test
-    fun omitsThePinWhenThereIsNone() {
-        val uri = PairingUri.build("10.0.0.5", 8080, null)
-        assertEquals("bmpro://10.0.0.5:8080", uri)
-        assertNull(PairingUri.parse(uri)?.pin)
+    fun ignoresAnyQueryOnTheLink() {
+        val parsed = PairingUri.parse("bmpro://10.0.0.5:8080?audio=1")
+        assertEquals("10.0.0.5", parsed?.host)
+        assertEquals(8080, parsed?.port)
     }
 
     @Test

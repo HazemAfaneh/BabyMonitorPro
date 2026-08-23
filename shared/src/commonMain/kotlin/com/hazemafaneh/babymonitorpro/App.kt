@@ -1,6 +1,8 @@
 package com.hazemafaneh.babymonitorpro
 
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.getValue
@@ -9,11 +11,13 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import com.hazemafaneh.babymonitorpro.core.CameraEndpoint
+import com.hazemafaneh.babymonitorpro.core.DeepLinks
 import com.hazemafaneh.babymonitorpro.core.Role
 import com.hazemafaneh.babymonitorpro.di.appModule
 import com.hazemafaneh.babymonitorpro.store.AppSettings
 import com.hazemafaneh.babymonitorpro.ui.Routes
 import com.hazemafaneh.babymonitorpro.ui.screens.CameraScreen
+import com.hazemafaneh.babymonitorpro.ui.screens.CameraSettingsScreen
 import com.hazemafaneh.babymonitorpro.ui.screens.FindCameraScreen
 import com.hazemafaneh.babymonitorpro.ui.screens.LiveViewScreen
 import com.hazemafaneh.babymonitorpro.ui.screens.RolePickerScreen
@@ -26,14 +30,30 @@ import org.koin.dsl.koinConfiguration
 fun App() {
     KoinApplication(koinConfiguration { modules(appModule) }) {
         val settings = koinInject<AppSettings>()
-        var nightDim by remember { mutableStateOf(settings.nightMode) }
+
+        // The *preference*, which merely arms night mode. Whether it is currently in force
+        // is [nightActive] below — the two are separate because the screen has to come back
+        // to full brightness the moment it is touched.
+        var nightPreference by remember { mutableStateOf(settings.nightMode) }
+        var nightActive by remember { mutableStateOf(false) }
 
         // The endpoint being watched is held here rather than encoded into the route:
-        // it keeps navigation free of URL escaping for device names and PINs.
-        var target by remember { mutableStateOf<Pair<CameraEndpoint, String?>?>(null) }
+        // it keeps navigation free of URL escaping for device names.
+        var target by remember { mutableStateOf<Watch?>(null) }
 
-        BabyMonitorTheme(darkTheme = true, nightDim = nightDim) {
+        BabyMonitorTheme(darkTheme = true, nightActive = nightActive) {
             val navController = rememberNavController()
+
+            // A tapped alert notification, or a bmpro:// link handed over by the OS. It can
+            // arrive before this composition exists — the tap may be what launched the
+            // process — so it is parked in DeepLinks and picked up here whenever we come up.
+            val pending by DeepLinks.pending.collectAsState()
+            LaunchedEffect(pending) {
+                val request = pending ?: return@LaunchedEffect
+                target = Watch(request.endpoint, request.autoAudio)
+                DeepLinks.consume()
+                navController.navigate(Routes.LIVE)
+            }
 
             NavHost(navController = navController, startDestination = Routes.ROLE) {
                 composable(Routes.ROLE) {
@@ -50,18 +70,35 @@ fun App() {
 
                 composable(Routes.CAMERA) {
                     CameraScreen(
-                        onNightDimChanged = {
-                            nightDim = it
+                        nightEnabled = nightPreference,
+                        onNightActiveChanged = { nightActive = it },
+                        onSettings = { navController.navigate(Routes.CAMERA_SETTINGS) },
+                        onStop = { navController.popBackStack(Routes.ROLE, inclusive = false) },
+                    )
+                }
+
+                composable(Routes.CAMERA_SETTINGS) {
+                    CameraSettingsScreen(
+                        nightEnabled = nightPreference,
+                        onNightEnabledChanged = {
+                            nightPreference = it
                             settings.nightMode = it
+                            // Any interaction returns the screen to full brightness; the
+                            // camera screen re-arms the settle timer when it resumes.
+                            nightActive = false
                         },
-                        onStop = { navController.popBackStack() },
+                        onBack = { navController.popBackStack() },
+                        onStop = {
+                            nightActive = false
+                            navController.popBackStack(Routes.ROLE, inclusive = false)
+                        },
                     )
                 }
 
                 composable(Routes.FIND) {
                     FindCameraScreen(
-                        onConnect = { endpoint, pin ->
-                            target = endpoint to pin
+                        onConnect = { endpoint ->
+                            target = Watch(endpoint, autoAudio = false)
                             navController.navigate(Routes.LIVE)
                         },
                         onBack = { navController.popBackStack() },
@@ -75,8 +112,8 @@ fun App() {
                         navController.popBackStack()
                     } else {
                         LiveViewScreen(
-                            endpoint = current.first,
-                            pin = current.second,
+                            endpoint = current.endpoint,
+                            autoAudio = current.autoAudio,
                             onBack = { navController.popBackStack() },
                         )
                     }
@@ -85,3 +122,9 @@ fun App() {
         }
     }
 }
+
+/** What the live view needs, kept out of the route so names need no escaping. */
+private data class Watch(
+    val endpoint: CameraEndpoint,
+    val autoAudio: Boolean,
+)

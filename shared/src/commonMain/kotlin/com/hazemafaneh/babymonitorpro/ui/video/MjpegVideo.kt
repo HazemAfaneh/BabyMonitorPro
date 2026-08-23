@@ -5,8 +5,15 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.ImageBitmap
 import com.hazemafaneh.babymonitorpro.core.CameraEndpoint
 
-/** Connection lifecycle of a video surface, surfaced as the live view's status chip. */
-enum class VideoStatus { CONNECTING, LIVE, RECONNECTING, UNAUTHORIZED, FAILED }
+/**
+ * Connection lifecycle of a video surface, surfaced as the live view's status chip.
+ *
+ * [NO_VIDEO] is deliberately distinct from [FAILED]: a camera that answers on the control
+ * channel while sending no frames is the most dangerous state in the app, because the parent
+ * sees a black rectangle that a healthy-looking status has told them to trust. "Not
+ * connected" and "connected, but blind" need different words and different answers.
+ */
+enum class VideoStatus { CONNECTING, LIVE, RECONNECTING, NO_VIDEO, FAILED }
 
 /**
  * Renders the camera's MJPEG stream.
@@ -18,7 +25,6 @@ enum class VideoStatus { CONNECTING, LIVE, RECONNECTING, UNAUTHORIZED, FAILED }
 @Composable
 expect fun MjpegVideo(
     endpoint: CameraEndpoint,
-    pin: String?,
     modifier: Modifier,
     onStatus: (VideoStatus) -> Unit,
     onFrame: (Long) -> Unit,
@@ -27,6 +33,15 @@ expect fun MjpegVideo(
      * reason is the hardest thing to debug on a phone that has no console.
      */
     onError: (String?) -> Unit = {},
+    /**
+     * Width / height of the decoded frame, reported when it first becomes known and again
+     * whenever it changes.
+     *
+     * The viewer cannot assume it: the camera's orientation is whatever the other device is
+     * lying in, so a portrait phone watching a landscape camera aspect-fits the picture into
+     * about a third of its screen. Knowing the shape is what lets the live view say so.
+     */
+    onAspectRatio: (Float) -> Unit = {},
 )
 
 /** JPEG -> ImageBitmap. Returns null on web, which never decodes frames itself. */

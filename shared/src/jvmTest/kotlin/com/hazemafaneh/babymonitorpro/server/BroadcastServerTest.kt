@@ -5,7 +5,6 @@ import com.hazemafaneh.babymonitorpro.core.Bmp
 import com.hazemafaneh.babymonitorpro.core.CameraEndpoint
 import io.ktor.client.HttpClient
 import io.ktor.client.request.get
-import io.ktor.client.request.header
 import io.ktor.client.statement.bodyAsText
 import io.ktor.http.HttpStatusCode
 import kotlinx.coroutines.flow.take
@@ -20,8 +19,8 @@ import kotlin.test.assertTrue
 
 /**
  * Exercises the real socket: a broadcaster with the synthetic camera on one side, the
- * viewer's own client on the other. No mocks — if the multipart framing or the PIN check
- * were wrong, this would fail.
+ * viewer's own client on the other. No mocks — if the multipart framing were wrong, this
+ * would fail.
  */
 class BroadcastServerTest {
 
@@ -41,7 +40,6 @@ class BroadcastServerTest {
             val info = withTimeout(TIMEOUT) { client.fetchInfo() }
             assertEquals("Nursery test", info.deviceName)
             assertEquals(Bmp.PROTOCOL_VERSION, info.protocolVersion)
-            assertTrue(!info.pinRequired)
 
             val frames = withTimeout(TIMEOUT) { client.streamFrames().take(3).toList() }
             assertEquals(3, frames.size)
@@ -72,7 +70,6 @@ class BroadcastServerTest {
             for (field in listOf(
                 "\"deviceName\":\"Nursery test\"",
                 "\"protocolVersion\":1",
-                "\"pinRequired\":false",
                 "\"videoWidth\":1280",
                 "\"audioSampleRate\":16000",
             )) {
@@ -83,45 +80,9 @@ class BroadcastServerTest {
         }
     }
 
-    @Test
-    fun aPinLocksEveryEndpointAndBothWaysOfPassingItWork() = runBlocking {
-        val port = 18_082
-        broadcaster.start(config(port = port, pin = "246813"))
-
-        val raw = HttpClient { expectSuccess = false }
-        try {
-            val withoutPin = withTimeout(TIMEOUT) { raw.get("http://127.0.0.1:$port${Bmp.PATH_INFO}") }
-            assertEquals(HttpStatusCode.Unauthorized, withoutPin.status)
-
-            val wrongPin = withTimeout(TIMEOUT) {
-                raw.get("http://127.0.0.1:$port${Bmp.PATH_INFO}") {
-                    header(Bmp.PIN_HEADER, "000000")
-                }
-            }
-            assertEquals(HttpStatusCode.Unauthorized, wrongPin.status)
-
-            val viaHeader = withTimeout(TIMEOUT) {
-                raw.get("http://127.0.0.1:$port${Bmp.PATH_INFO}") {
-                    header(Bmp.PIN_HEADER, "246813")
-                }
-            }
-            assertEquals(HttpStatusCode.OK, viaHeader.status)
-
-            // The browser's <img> tag cannot set headers, hence the query parameter.
-            val viaQuery = withTimeout(TIMEOUT) {
-                raw.get("http://127.0.0.1:$port${Bmp.PATH_INFO}?${Bmp.PIN_QUERY_PARAM}=246813")
-            }
-            assertEquals(HttpStatusCode.OK, viaQuery.status)
-            assertContains(viaQuery.bodyAsText(), "\"pinRequired\":true")
-        } finally {
-            raw.close()
-        }
-    }
-
-    private fun config(port: Int, pin: String? = null) = BroadcastConfig(
+    private fun config(port: Int) = BroadcastConfig(
         deviceName = "Nursery test",
         port = port,
-        pin = pin,
         useSyntheticVideo = true,
     )
 

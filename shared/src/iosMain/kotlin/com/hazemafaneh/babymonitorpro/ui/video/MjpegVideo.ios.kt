@@ -1,7 +1,10 @@
 package com.hazemafaneh.babymonitorpro.ui.video
 
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.viewinterop.UIKitInteropProperties
 import androidx.compose.ui.viewinterop.UIKitView
@@ -18,6 +21,7 @@ import kotlinx.cinterop.readValue
 import kotlinx.cinterop.reinterpret
 import kotlinx.cinterop.set
 import kotlinx.cinterop.usePinned
+import kotlinx.cinterop.useContents
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import platform.CoreFoundation.CFDictionaryCreate
@@ -51,12 +55,15 @@ import platform.UIKit.UIViewContentMode
 @Composable
 actual fun MjpegVideo(
     endpoint: CameraEndpoint,
-    pin: String?,
     modifier: Modifier,
     onStatus: (VideoStatus) -> Unit,
     onFrame: (Long) -> Unit,
     onError: (String?) -> Unit,
+    onAspectRatio: (Float) -> Unit,
 ) {
+    // Held outside the render lambda so the callback fires on a change, not per frame.
+    var lastAspect by remember(endpoint.id) { mutableStateOf(0f) }
+
     val imageView = remember(endpoint.id) {
         UIImageView(frame = CGRectZero.readValue()).apply {
             contentMode = UIViewContentMode.UIViewContentModeScaleAspectFit
@@ -69,7 +76,6 @@ actual fun MjpegVideo(
 
     MjpegFrameLoop(
         endpoint = endpoint,
-        pin = pin,
         onStatus = onStatus,
         onError = onError,
         onFrame = onFrame,
@@ -78,7 +84,19 @@ actual fun MjpegVideo(
             if (decoded == null) {
                 false
             } else {
-                withContext(Dispatchers.Main) { imageView.image = decoded }
+                withContext(Dispatchers.Main) {
+                    imageView.image = decoded
+                    val size = decoded.size
+                    // Read here rather than off the view: the view is full-screen, it is the
+                    // image inside it that carries the shape.
+                    val ratio = size.useContents {
+                        if (height > 0.0) (width / height).toFloat() else 0f
+                    }
+                    if (ratio > 0f && ratio != lastAspect) {
+                        lastAspect = ratio
+                        onAspectRatio(ratio)
+                    }
+                }
                 true
             }
         },

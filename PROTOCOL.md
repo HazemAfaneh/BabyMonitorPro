@@ -6,7 +6,7 @@ contacts a server outside that network.
 
 - Transport: plain HTTP/1.1 and WebSocket on **port 8080** by default.
 - Discovery: mDNS service type `_babymonitorpro._tcp`.
-- Pairing link: `bmpro://<host>:<port>?pin=<pin>`.
+- Pairing link: `bmpro://<host>:<port>`.
 
 Everything below is served by the device running as **Camera**. Viewers are pure clients.
 
@@ -14,22 +14,8 @@ Everything below is served by the device running as **Camera**. Viewers are pure
 
 ## Authentication
 
-Optional, off by default. When a PIN is set, **every** endpoint requires it. The PIN is six
-digits and is checked before routing, so an unauthenticated request never reaches a handler.
-
-| How | Where | Notes |
-|---|---|---|
-| `X-BMPro-Pin: 004215` | Request header | Preferred; used by the native viewers. |
-| `?pin=004215` | Query parameter | Required for the web viewer and for WebSockets — an `<img>` tag cannot set headers. |
-
-Failure returns `401 Unauthorized` with:
-
-```json
-{ "error": "pin_required", "path": "/stream" }
-```
-
-The PIN keeps a curious housemate off the stream. It is not encryption, and v1 makes no
-claim beyond that: traffic on the LAN is unencrypted.
+None. Every endpoint is open to any device that can reach the port, and traffic on the LAN
+is unencrypted — v1 makes no claim beyond "it never leaves your network".
 
 ---
 
@@ -43,7 +29,6 @@ confirm a host is a BabyMonitor Pro camera.
   "deviceName": "Nursery",
   "role": "camera",
   "protocolVersion": 1,
-  "pinRequired": false,
   "streaming": true,
   "videoWidth": 1280,
   "videoHeight": 720,
@@ -162,15 +147,14 @@ The camera advertises `_babymonitorpro._tcp` in the `local.` domain, with TXT re
 | Key | Value |
 |---|---|
 | `name` | Human-readable device name |
-| `pin` | `1` when a PIN is required, `0` otherwise |
 | `v` | Protocol version |
 
 Implementations: `NsdManager` (Android), `NSNetService` (iOS), JmDNS (desktop). Browsers
 have no mDNS API, so the web viewer always uses one of the two fallbacks below — as does
 any device where discovery is blocked by network policy.
 
-**Fallback 1 — manual entry.** `host` or `host:port`, plus the PIN if the camera asks for one.
+**Fallback 1 — manual entry.** `host` or `host:port`.
 
 **Fallback 2 — pairing code.** The camera screen shows both its `host:port` in plain text
-and a QR code encoding `bmpro://<host>:<port>?pin=<pin>`. Viewers with a camera scan it;
+and a QR code encoding `bmpro://<host>:<port>`. Viewers with a camera scan it;
 everyone else reads the address off the screen.

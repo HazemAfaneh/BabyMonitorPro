@@ -57,11 +57,14 @@ private external val document: DomDocument
 @Composable
 actual fun MjpegVideo(
     endpoint: CameraEndpoint,
-    pin: String?,
     modifier: Modifier,
     onStatus: (VideoStatus) -> Unit,
     onFrame: (Long) -> Unit,
     onError: (String?) -> Unit,
+    // The <img> owns decoding, so the frame's dimensions never pass through Kotlin here.
+    // The browser aspect-fits it with object-fit anyway, inside a band the layout already
+    // reserves — so nothing downstream needs the number.
+    onAspectRatio: (Float) -> Unit,
 ) {
     val density = LocalDensity.current
     var left by remember { mutableStateOf(0f) }
@@ -69,10 +72,7 @@ actual fun MjpegVideo(
     var width by remember { mutableStateOf(0f) }
     var height by remember { mutableStateOf(0f) }
 
-    val url = remember(endpoint.id, pin) {
-        val query = if (pin.isNullOrBlank()) "" else "?${Bmp.PIN_QUERY_PARAM}=$pin"
-        "${endpoint.baseUrl}${Bmp.PATH_STREAM}$query"
-    }
+    val url = remember(endpoint.id) { "${endpoint.baseUrl}${Bmp.PATH_STREAM}" }
 
     val element = remember(url) {
         document.createElement("img").also { image ->

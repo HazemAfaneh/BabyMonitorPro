@@ -125,7 +125,7 @@ actual class CameraController actual constructor(private val config: CaptureConf
 
     // `startRunning` and `stopRunning` block until the camera has actually spun up or down —
     // hundreds of milliseconds. Both are reached from the UI on some paths (stopping the
-    // broadcast, restarting it after a PIN change), and on the main thread that is a visible
+    // broadcast, restarting it after a settings change), and on the main thread that is a visible
     // freeze of the whole app, Compose included.
     actual suspend fun start() = withContext(Dispatchers.Default) {
         // Read on the main thread, where UIKit insists device orientation is read, and then

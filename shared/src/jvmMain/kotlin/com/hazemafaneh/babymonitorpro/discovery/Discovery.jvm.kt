@@ -27,7 +27,7 @@ private class JmDnsAdvertiser : CameraAdvertiser {
 
     private var jmdns: JmDNS? = null
 
-    override fun start(deviceName: String, port: Int, pinRequired: Boolean) {
+    override fun start(deviceName: String, port: Int) {
         stop()
         runCatching {
             val instance = JmDNS.create(bindAddress())
@@ -39,7 +39,6 @@ private class JmDnsAdvertiser : CameraAdvertiser {
                 0,
                 mapOf(
                     Bmp.TXT_NAME to deviceName,
-                    Bmp.TXT_PIN to if (pinRequired) "1" else "0",
                     Bmp.TXT_VERSION to Bmp.PROTOCOL_VERSION.toString(),
                 ),
             )
@@ -87,7 +86,6 @@ private class JmDnsBrowser : CameraBrowser {
                             ?: event.name,
                         host = host,
                         port = info.port,
-                        pinRequired = info.getPropertyString(Bmp.TXT_PIN) == "1",
                         source = CameraEndpoint.Source.MDNS,
                     )
                     _cameras.update { list -> list.filterNot { it.id == endpoint.id } + endpoint }

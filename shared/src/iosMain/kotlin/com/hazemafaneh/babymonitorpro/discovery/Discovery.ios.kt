@@ -40,7 +40,7 @@ private class IosAdvertiser : CameraAdvertiser {
     private var service: NSNetService? = null
 
     @OptIn(ExperimentalForeignApi::class)
-    override fun start(deviceName: String, port: Int, pinRequired: Boolean) {
+    override fun start(deviceName: String, port: Int) {
         stop()
         val published = NSNetService(
             domain = LOCAL_DOMAIN,
@@ -50,7 +50,6 @@ private class IosAdvertiser : CameraAdvertiser {
         )
         val txt = mapOf<Any?, Any?>(
             Bmp.TXT_NAME to deviceName.toNSData(),
-            Bmp.TXT_PIN to (if (pinRequired) "1" else "0").toNSData(),
             Bmp.TXT_VERSION to Bmp.PROTOCOL_VERSION.toString().toNSData(),
         )
         published.setTXTRecordData(NSNetService.dataFromTXTRecordDictionary(txt))
@@ -108,7 +107,6 @@ private class IosBrowser : CameraBrowser {
                 name = txt.stringFor(Bmp.TXT_NAME) ?: sender.name,
                 host = host,
                 port = sender.port.toInt(),
-                pinRequired = txt.stringFor(Bmp.TXT_PIN) == "1",
                 source = CameraEndpoint.Source.MDNS,
             )
             _cameras.update { list -> list.filterNot { it.id == endpoint.id } + endpoint }

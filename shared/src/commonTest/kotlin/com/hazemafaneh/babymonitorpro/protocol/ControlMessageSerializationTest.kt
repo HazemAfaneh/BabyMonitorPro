@@ -58,12 +58,12 @@ class ControlMessageSerializationTest {
 
     @Test
     fun deviceInfoCarriesTheProtocolVersion() {
-        val info = DeviceInfoResponse(deviceName = "Nursery", pinRequired = true)
+        val info = DeviceInfoResponse(deviceName = "Nursery")
         val json = BmpJson.encodeToString(DeviceInfoResponse.serializer(), info)
         val decoded = BmpJson.decodeFromString(DeviceInfoResponse.serializer(), json)
 
         assertEquals(info, decoded)
         assertEquals(1, decoded.protocolVersion)
-        assertTrue(decoded.pinRequired)
+        assertTrue(decoded.streaming)
     }
 }

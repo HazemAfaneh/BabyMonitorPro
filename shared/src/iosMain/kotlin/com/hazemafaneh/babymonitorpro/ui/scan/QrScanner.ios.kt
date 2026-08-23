@@ -7,6 +7,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -57,6 +58,7 @@ private enum class CameraAccess { PENDING, GRANTED, DENIED }
 actual fun QrScanner(
     modifier: Modifier,
     onResult: (String) -> Unit,
+    onUnavailable: () -> Unit,
 ) {
     val mediaType = remember { AVMediaTypeVideo ?: "vide" }
     var access by remember { mutableStateOf(currentAccess(mediaType)) }
@@ -74,6 +76,12 @@ actual fun QrScanner(
             }
         }
         onDispose { }
+    }
+
+    // The screen around this needs to know, so it can offer manual entry rather than leave
+    // the parent staring at an instruction the phone cannot follow.
+    LaunchedEffect(access) {
+        if (access == CameraAccess.DENIED) onUnavailable()
     }
 
     // Every branch paints black. Compose punches a transparent hole through its canvas for

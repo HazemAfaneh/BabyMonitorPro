@@ -122,7 +122,10 @@ kotlin {
             implementation(libs.webcam.capture)
         }
         iosMain.dependencies {
-            implementation(libs.ktor.client.darwin)
+            // CIO, not Darwin: NSURLSession parses `multipart/x-mixed-replace` itself and
+            // Ktor's delegate does not acknowledge the per-part responses, which loses
+            // bytes mid-frame. See client/CameraHttpClient.ios.kt.
+            implementation(libs.ktor.client.cio)
         }
         jsMain.dependencies {
             implementation(libs.wrappers.browser)
