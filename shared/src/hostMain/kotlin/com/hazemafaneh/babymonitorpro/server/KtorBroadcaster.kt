@@ -8,6 +8,8 @@ import com.hazemafaneh.babymonitorpro.capture.isMicrophoneAvailable
 import com.hazemafaneh.babymonitorpro.capture.downscaleToGray
 import com.hazemafaneh.babymonitorpro.capture.hasMultipleCameras
 import com.hazemafaneh.babymonitorpro.capture.localIpv4Addresses
+import com.hazemafaneh.babymonitorpro.client.ViewerClient
+import com.hazemafaneh.babymonitorpro.core.CameraEndpoint
 import com.hazemafaneh.babymonitorpro.core.nowMillis
 import com.hazemafaneh.babymonitorpro.detect.MotionDetector
 import com.hazemafaneh.babymonitorpro.detect.SoundDetector
@@ -25,6 +27,7 @@ import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
@@ -130,6 +133,33 @@ class KtorBroadcaster : Broadcaster {
             motionSensitivity = config.motionSensitivity,
             soundSensitivity = config.soundSensitivity,
         )
+
+        scope.launch { verifyListening(config) }
+    }
+
+    /**
+     * CIO binds on the engine's own coroutine, so `start()` returning is not evidence that
+     * anything is listening. Without this the camera screen prints a pairing address and a
+     * QR code for a port that refuses every connection, and the viewer takes the blame.
+     */
+    private suspend fun verifyListening(config: BroadcastConfig) {
+        val endpoint = CameraEndpoint(name = config.deviceName, host = LOOPBACK, port = config.port)
+        val probe = ViewerClient(endpoint, config.pin)
+        try {
+            val deadline = nowMillis() + SELF_CHECK_TIMEOUT_MILLIS
+            while (nowMillis() < deadline) {
+                if (runCatching { probe.fetchInfo() }.isSuccess) return
+                delay(SELF_CHECK_RETRY_MILLIS)
+            }
+            _state.update {
+                it.copy(
+                    lastError = "Could not open port ${config.port}. " +
+                        "Another app may be using it — stop it and start broadcasting again.",
+                )
+            }
+        } finally {
+            probe.close()
+        }
     }
 
     override suspend fun stop() {
@@ -237,6 +267,10 @@ class KtorBroadcaster : Broadcaster {
         // The detector's working resolution, per the protocol notes in PROTOCOL.md.
         const val DETECT_WIDTH = 64
         const val DETECT_HEIGHT = 48
+
+        const val LOOPBACK = "127.0.0.1"
+        const val SELF_CHECK_TIMEOUT_MILLIS = 5_000L
+        const val SELF_CHECK_RETRY_MILLIS = 250L
     }
 }
 

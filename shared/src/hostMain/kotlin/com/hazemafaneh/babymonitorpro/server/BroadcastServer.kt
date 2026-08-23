@@ -84,14 +84,17 @@ class BroadcastServer(
                         call.respondBytesWriter(
                             contentType = ContentType.parse(Bmp.MJPEG_CONTENT_TYPE),
                         ) {
-                            frames.collectLatest { jpeg ->
-                                writeStringUtf8(
-                                    "--${Bmp.MJPEG_BOUNDARY}\r\n" +
-                                        "Content-Type: image/jpeg\r\n" +
-                                        "Content-Length: ${jpeg.size}\r\n\r\n",
-                                )
-                                writeFully(jpeg)
-                                writeStringUtf8("\r\n")
+                            // collect, not collectLatest: collectLatest cancels its block the
+                            // moment the next frame arrives, which lands mid-write and puts a
+                            // truncated JPEG on the wire behind an honest Content-Length. The
+                            // viewer decodes half a picture — the "randomly broken image".
+                            // Dropping stale frames is already handled upstream, where the
+                            // frame flow is DROP_OLDEST, so a slow viewer misses whole frames
+                            // instead of receiving damaged ones.
+                            frames.collect { jpeg ->
+                                // One write per frame: a part must never be split across two
+                                // suspension points where cancellation could land between them.
+                                writeFully(framePacket(jpeg))
                                 flush()
                             }
                         }
@@ -166,6 +169,21 @@ class BroadcastServer(
     }
 
     private companion object {
+        /** Headers, payload and trailing CRLF as one buffer, ready for a single write. */
+        fun framePacket(jpeg: ByteArray): ByteArray {
+            val header = (
+                "--${Bmp.MJPEG_BOUNDARY}\r\n" +
+                    "Content-Type: image/jpeg\r\n" +
+                    "Content-Length: ${jpeg.size}\r\n\r\n"
+                ).encodeToByteArray()
+            val packet = ByteArray(header.size + jpeg.size + 2)
+            header.copyInto(packet)
+            jpeg.copyInto(packet, header.size)
+            packet[packet.size - 2] = '\r'.code.toByte()
+            packet[packet.size - 1] = '\n'.code.toByte()
+            return packet
+        }
+
         const val BIND_ALL_INTERFACES = "0.0.0.0"
         const val GRACE_MILLIS = 300L
         const val TIMEOUT_MILLIS = 1000L

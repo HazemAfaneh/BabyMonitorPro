@@ -35,3 +35,13 @@ fun isPrivateIpv4(address: String): Boolean {
         else -> false
     }
 }
+
+/**
+ * A self-assigned 169.254 address, handed out when an interface never got a DHCP lease.
+ * It is private, so [isPrivateIpv4] accepts it, but nothing on the WiFi can reach it —
+ * offering one as a pairing address gets the viewer a refused connection.
+ */
+fun isLinkLocalIpv4(address: String): Boolean {
+    val parts = address.split('.')
+    return parts.size == 4 && parts[0] == "169" && parts[1] == "254"
+}

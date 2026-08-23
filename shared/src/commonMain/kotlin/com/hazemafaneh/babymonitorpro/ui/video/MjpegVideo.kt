@@ -22,6 +22,11 @@ expect fun MjpegVideo(
     modifier: Modifier,
     onStatus: (VideoStatus) -> Unit,
     onFrame: (Long) -> Unit,
+    /**
+     * Why the last attempt failed, or null once frames are flowing. A black screen with no
+     * reason is the hardest thing to debug on a phone that has no console.
+     */
+    onError: (String?) -> Unit = {},
 )
 
 /** JPEG -> ImageBitmap. Returns null on web, which never decodes frames itself. */

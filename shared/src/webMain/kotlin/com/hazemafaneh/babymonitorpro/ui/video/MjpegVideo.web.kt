@@ -61,6 +61,7 @@ actual fun MjpegVideo(
     modifier: Modifier,
     onStatus: (VideoStatus) -> Unit,
     onFrame: (Long) -> Unit,
+    onError: (String?) -> Unit,
 ) {
     val density = LocalDensity.current
     var left by remember { mutableStateOf(0f) }
@@ -100,6 +101,9 @@ actual fun MjpegVideo(
         element.style.height = "${height / density.density}px"
         if (width > 0f && height > 0f) {
             onStatus(VideoStatus.LIVE)
+            // The <img> decodes on its own; the browser owns any transport error, so there
+            // is never a message to hand up here.
+            onError(null)
             onFrame(nowMillis())
         }
     }

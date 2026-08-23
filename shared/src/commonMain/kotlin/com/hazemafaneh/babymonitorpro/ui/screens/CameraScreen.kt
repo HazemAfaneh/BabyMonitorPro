@@ -89,8 +89,11 @@ fun CameraScreen(
 
     // Android must ask before the first frame; elsewhere this reports granted immediately.
     val permissions = rememberCapturePermissions()
+    // Both, not just the camera: on Android 14+ a foreground service that claims the
+    // microphone type without RECORD_AUDIO granted is killed by the system, and the HTTP
+    // server dies with the process.
     LaunchedEffect(permissions.cameraGranted, permissions.microphoneGranted) {
-        if (!permissions.cameraGranted) permissions.request()
+        if (!permissions.cameraGranted || !permissions.microphoneGranted) permissions.request()
     }
 
     LaunchedEffect(broadcaster, permissions.cameraGranted, permissions.microphoneGranted) {
@@ -167,6 +170,21 @@ fun CameraScreen(
         }
 
         Spacer(Modifier.height(16.dp))
+
+        state.lastError?.let { problem ->
+            Surface(
+                modifier = Modifier.fillMaxWidth().clip(MaterialTheme.shapes.large),
+                color = MaterialTheme.colorScheme.errorContainer,
+            ) {
+                Text(
+                    text = problem,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onErrorContainer,
+                    modifier = Modifier.padding(16.dp),
+                )
+            }
+            Spacer(Modifier.height(12.dp))
+        }
 
         SectionCard(title = "Pairing") {
             val address = state.primaryAddress

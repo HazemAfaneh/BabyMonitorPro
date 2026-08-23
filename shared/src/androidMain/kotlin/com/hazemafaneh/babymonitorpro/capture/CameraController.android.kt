@@ -7,6 +7,7 @@ import android.graphics.Matrix
 import android.media.AudioFormat
 import android.media.AudioRecord
 import android.media.MediaRecorder
+import android.util.Log
 import androidx.camera.core.Camera
 import androidx.camera.core.CameraSelector
 import androidx.camera.core.ImageAnalysis
@@ -107,6 +108,11 @@ actual class CameraController actual constructor(private val config: CaptureConf
         val selector = CameraSelector.Builder().requireLensFacing(lensFacing).build()
         camera = runCatching {
             cameraProvider.bindToLifecycle(lifecycleOwner, selector, analysis)
+        }.onFailure {
+            // Swallowing this silently makes a dead camera indistinguishable from a working
+            // one: the server still answers /stream, just with a body that never produces
+            // a byte, and every viewer blames its own decoder.
+            Log.e(TAG, "CameraX bindToLifecycle failed; no video will be produced", it)
         }.getOrNull()
     }
 
@@ -144,6 +150,10 @@ actual class CameraController actual constructor(private val config: CaptureConf
                 ContextCompat.getMainExecutor(context),
             )
         }
+
+    private companion object {
+        const val TAG = "CameraController"
+    }
 
     /** CameraX binds to a lifecycle; this one exists purely for the broadcast session. */
     private class CaptureLifecycleOwner : LifecycleOwner {

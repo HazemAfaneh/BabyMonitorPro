@@ -67,6 +67,7 @@ fun LiveViewScreen(
     var cameraStatus by remember { mutableStateOf<ControlMessage.Status?>(null) }
     var latencyMillis by remember { mutableStateOf<Long?>(null) }
     var alert by remember { mutableStateOf<Alert?>(null) }
+    var failure by remember { mutableStateOf<String?>(null) }
     var audioOn by remember { mutableStateOf(false) }
     var controlsVisible by remember { mutableStateOf(true) }
     var lastInteraction by remember { mutableStateOf(nowMillis()) }
@@ -131,13 +132,18 @@ fun LiveViewScreen(
         }
     }
 
+    // Audio reconnects on its own like the video does: a socket dropped by a roaming phone
+    // used to leave sound dead until the parent noticed and toggled it twice.
     LaunchedEffect(audioOn, endpoint.id, pin) {
         val player = audioPlayer
         if (!audioOn || player == null) return@LaunchedEffect
         val client = ViewerClient(endpoint, pin)
         player.start()
         try {
-            client.audioChunks().collect { chunk -> player.write(chunk) }
+            while (true) {
+                runCatching { client.audioChunks().collect { chunk -> player.write(chunk) } }
+                delay(RECONNECT_DELAY_MILLIS)
+            }
         } finally {
             player.stop()
             client.close()
@@ -174,6 +180,7 @@ fun LiveViewScreen(
             },
             onStatus = { status = it },
             onFrame = { },
+            onError = { failure = it },
         )
 
         AnimatedVisibility(
@@ -212,7 +219,26 @@ fun LiveViewScreen(
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                StatusChip(status = status, latencyMillis = latencyMillis)
+                Column(Modifier.fillMaxWidth(0.75f)) {
+                    StatusChip(status = status, latencyMillis = latencyMillis)
+                    // A black picture with no explanation is unactionable. Once the stream
+                    // is live the reason is stale, so it only shows while it is still true.
+                    val reason = failure
+                    if (reason != null && status != VideoStatus.LIVE) {
+                        Spacer(Modifier.size(6.dp))
+                        Surface(
+                            color = MaterialTheme.colorScheme.surface.copy(alpha = 0.85f),
+                            shape = MaterialTheme.shapes.large,
+                        ) {
+                            Text(
+                                text = reason,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
+                            )
+                        }
+                    }
+                }
                 TextButton(onClick = onBack) { Text("Close") }
             }
         }

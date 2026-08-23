@@ -13,15 +13,19 @@ import io.ktor.client.plugins.websocket.webSocket
 import io.ktor.client.request.get
 import io.ktor.client.request.header
 import io.ktor.client.request.prepareGet
+import io.ktor.client.statement.HttpResponse
 import io.ktor.client.statement.bodyAsChannel
 import io.ktor.client.statement.bodyAsText
+import io.ktor.http.HttpStatusCode
+import io.ktor.http.isSuccess
 import io.ktor.utils.io.readAvailable
 import io.ktor.websocket.Frame
 import io.ktor.websocket.readBytes
 import io.ktor.websocket.readText
+import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.buffer
 import kotlinx.coroutines.flow.channelFlow
-import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.launch
 
 /**
@@ -34,6 +38,9 @@ class ViewerClient(
     private val endpoint: CameraEndpoint,
     private val pin: String? = null,
 ) {
+    // expectSuccess stays off so the status can be turned into a message a parent can act
+    // on ("PIN required") rather than Ktor's generic client exception. Every call site has
+    // to check the status itself — see [requireSuccess].
     private val client = HttpClient {
         install(WebSockets)
         expectSuccess = false
@@ -46,6 +53,7 @@ class ViewerClient(
         val response = client.get("${endpoint.baseUrl}${Bmp.PATH_INFO}$query") {
             pin?.let { header(Bmp.PIN_HEADER, it) }
         }
+        response.requireSuccess()
         return BmpJson.decodeFromString(DeviceInfoResponse.serializer(), response.bodyAsText())
     }
 
@@ -54,23 +62,36 @@ class ViewerClient(
      * closes it. Web viewers use an `<img>` element instead — a browser decodes
      * `multipart/x-mixed-replace` natively and far more cheaply.
      */
-    fun streamFrames(): Flow<ByteArray> = flow {
+    fun streamFrames(): Flow<ByteArray> = channelFlow {
+        // channelFlow, not flow: `execute` runs its block in the engine's own context, and
+        // on Darwin that is a different dispatcher from the collector's. A bare flow{} then
+        // fails every single read with "Flow invariant is violated", which the viewer's
+        // reconnect loop turns into a permanently black picture. The audio and control
+        // sockets below were always channelFlow, which is why only video was affected.
+        val downstream = this
         // UPGRADE PATH: a WebRTC PeerConnection would be established here, replacing the
         // multipart read loop; everything downstream still just sees decoded frames.
         val parser = MjpegParser(Bmp.MJPEG_BOUNDARY)
         client.prepareGet("${endpoint.baseUrl}${Bmp.PATH_STREAM}$query") {
             pin?.let { header(Bmp.PIN_HEADER, it) }
         }.execute { response ->
+            // Without this the viewer sits on a 401 body forever: no boundary ever arrives,
+            // so the parser yields no frames and the screen stays black with no explanation.
+            response.requireSuccess()
             val channel = response.bodyAsChannel()
             val buffer = ByteArray(READ_BUFFER)
             while (true) {
                 val read = channel.readAvailable(buffer, 0, buffer.size)
                 if (read == -1) break
                 if (read == 0) continue
-                for (frame in parser.feed(buffer, read)) emit(frame)
+                for (frame in parser.feed(buffer, read)) downstream.send(frame)
             }
         }
     }
+        // Newest frame wins, per PROTOCOL.md. Without this the default 64-deep buffer fills
+        // with 720p JPEGs whenever the decoder is slower than the network — which it is on
+        // iOS, where decoding happens on the main thread — trading memory for latency.
+        .buffer(capacity = 1, onBufferOverflow = BufferOverflow.DROP_OLDEST)
 
     /** PCM chunks from `/audio`, exactly as captured: 16-bit LE mono 16 kHz. */
     fun audioChunks(): Flow<ByteArray> = channelFlow {
@@ -110,7 +131,28 @@ class ViewerClient(
 
     private fun wsBase(): String = "ws://${endpoint.host}:${endpoint.port}"
 
+    private fun HttpResponse.requireSuccess() {
+        if (status.isSuccess()) return
+        throw CameraHttpException(status.value)
+    }
+
     private companion object {
         const val READ_BUFFER = 16 * 1024
+    }
+}
+
+/**
+ * A camera answered, but not with the stream. Carried as an exception because every read
+ * path is a cold flow the caller collects — there is nowhere else to put the status.
+ */
+class CameraHttpException(val statusCode: Int) : Exception(describe(statusCode)) {
+    val unauthorized: Boolean get() = statusCode == HttpStatusCode.Unauthorized.value
+
+    private companion object {
+        fun describe(status: Int): String = when (status) {
+            HttpStatusCode.Unauthorized.value -> "The camera requires a PIN"
+            HttpStatusCode.NotFound.value -> "That address is not a BabyMonitor Pro camera"
+            else -> "The camera answered with HTTP $status"
+        }
     }
 }
