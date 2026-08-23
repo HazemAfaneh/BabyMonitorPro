@@ -1,5 +1,3 @@
-rootProject.name = "babymonitorpro"
-
 pluginManagement {
     repositories {
         google {
@@ -12,6 +10,10 @@ pluginManagement {
         mavenCentral()
         gradlePluginPortal()
     }
+}
+
+plugins {
+    id("org.gradle.toolchains.foojay-resolver-convention") version "1.0.0"
 }
 
 dependencyResolutionManagement {
@@ -27,9 +29,7 @@ dependencyResolutionManagement {
     }
 }
 
-plugins {
-    id("org.gradle.toolchains.foojay-resolver-convention") version "1.0.0"
-}
+rootProject.name = "BabyMonitorPro"
 
 include(":androidApp")
 include(":desktopApp")
