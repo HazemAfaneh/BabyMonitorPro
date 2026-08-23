@@ -1,7 +1,5 @@
 package com.hazemafaneh.babymonitorpro.ui.screens
 
-import androidx.compose.animation.Crossfade
-import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -38,7 +36,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -53,7 +50,7 @@ import com.hazemafaneh.babymonitorpro.ui.rememberCapturePermissions
 import com.hazemafaneh.babymonitorpro.ui.components.PrivacyNote
 import com.hazemafaneh.babymonitorpro.ui.components.QrCode
 import com.hazemafaneh.babymonitorpro.ui.components.SectionCard
-import com.hazemafaneh.babymonitorpro.ui.video.decodeJpegFrame
+import com.hazemafaneh.babymonitorpro.ui.video.JpegFrameView
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.launch
 import org.koin.compose.koinInject
@@ -72,7 +69,6 @@ fun CameraScreen(
     var pin by remember { mutableStateOf(settings.pin) }
     var sensitivity by remember { mutableStateOf(settings.motionSensitivity.toFloat()) }
     var nightDim by remember { mutableStateOf(settings.nightMode) }
-    var preview by remember { mutableStateOf<ImageBitmap?>(null) }
 
     val stateFlow = remember(broadcaster) {
         broadcaster?.state ?: MutableStateFlow(BroadcastState(running = false))
@@ -80,12 +76,6 @@ fun CameraScreen(
     val state by stateFlow.collectAsState()
 
     KeepScreenAwake(enabled = state.running)
-
-    // Self-preview decodes the same frames the viewers receive, so what the parent sees
-    // here is exactly what is going out.
-    LaunchedEffect(broadcaster) {
-        broadcaster?.frames?.collect { jpeg -> preview = decodeJpegFrame(jpeg) }
-    }
 
     // Android must ask before the first frame; elsewhere this reports granted immediately.
     val permissions = rememberCapturePermissions()
@@ -151,22 +141,21 @@ fun CameraScreen(
                 .background(MaterialTheme.colorScheme.surface),
             contentAlignment = Alignment.Center,
         ) {
-            Crossfade(preview) { bitmap ->
-                if (bitmap == null) {
+            // The same frames the viewers receive, so what the parent sees here is exactly
+            // what is going out.
+            JpegFrameView(
+                frames = broadcaster?.frames,
+                contentDescription = "Self preview",
+                modifier = Modifier.fillMaxSize(),
+                contentScale = ContentScale.Crop,
+                placeholder = {
                     Text(
                         text = "Waiting for video…",
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
-                } else {
-                    Image(
-                        bitmap = bitmap,
-                        contentDescription = "Self preview",
-                        modifier = Modifier.fillMaxSize(),
-                        contentScale = ContentScale.Crop,
-                    )
-                }
-            }
+                },
+            )
         }
 
         Spacer(Modifier.height(16.dp))

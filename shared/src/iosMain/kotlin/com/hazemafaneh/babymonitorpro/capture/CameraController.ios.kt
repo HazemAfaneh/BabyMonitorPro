@@ -9,10 +9,12 @@ import kotlinx.cinterop.get
 import kotlinx.cinterop.pointed
 import kotlinx.cinterop.value
 import kotlinx.cinterop.usePinned
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.asSharedFlow
+import kotlinx.coroutines.withContext
 import platform.AVFAudio.AVAudioEngine
 import platform.AVFAudio.AVAudioConverter
 import platform.AVFAudio.AVAudioConverterInputStatus
@@ -45,11 +47,13 @@ import platform.CoreImage.CIContext
 import platform.CoreImage.CIImage
 import platform.CoreImage.JPEGRepresentationOfImage
 import platform.CoreMedia.CMSampleBufferGetImageBuffer
+import platform.CoreMedia.CMTimeMake
 import platform.CoreMedia.CMSampleBufferRef
 import platform.Foundation.NSData
 import platform.Foundation.NSNumber
 import platform.ImageIO.kCGImageDestinationLossyCompressionQuality
 import platform.darwin.NSObject
+import platform.darwin.dispatch_async
 import platform.darwin.dispatch_queue_create
 import platform.posix.memcpy
 
@@ -79,6 +83,15 @@ actual class CameraController actual constructor(private val config: CaptureConf
     private var useFront = config.useFrontCamera
     private var lastEmittedAt = 0L
 
+    /**
+     * The camera is pinned to the configured rate (see [applyFrameRate]), but delivery
+     * jitters either side of the interval. Comparing against the exact interval throws away
+     * every frame that arrives a millisecond early, which silently halves the frame rate and
+     * makes the picture lurch; a quarter-interval of slack absorbs the jitter without
+     * letting a genuinely early frame through.
+     */
+    private val minEmitIntervalMs = config.frameIntervalMs - config.frameIntervalMs / 4
+
     actual val frames: Flow<ByteArray> = frameFlow.asSharedFlow()
 
     private val delegate = object : NSObject(), AVCaptureVideoDataOutputSampleBufferDelegateProtocol {
@@ -88,7 +101,7 @@ actual class CameraController actual constructor(private val config: CaptureConf
             fromConnection: AVCaptureConnection,
         ) {
             val now = nowMillis()
-            if (now - lastEmittedAt < config.frameIntervalMs) return
+            if (now - lastEmittedAt < minEmitIntervalMs) return
             lastEmittedAt = now
 
             val pixels = CMSampleBufferGetImageBuffer(didOutputSampleBuffer) ?: return
@@ -102,18 +115,29 @@ actual class CameraController actual constructor(private val config: CaptureConf
         }
     }
 
-    actual suspend fun start() {
+    // `startRunning` and `stopRunning` block until the camera has actually spun up or down —
+    // hundreds of milliseconds. Both are reached from the UI on some paths (stopping the
+    // broadcast, restarting it after a PIN change), and on the main thread that is a visible
+    // freeze of the whole app, Compose included.
+    actual suspend fun start() = withContext(Dispatchers.Default) {
+        // One transaction: the session is not asked to re-plumb itself once per line.
+        session.beginConfiguration()
         session.sessionPreset = AVCaptureSessionPreset1280x720
         attachInput()
 
         output.setSampleBufferDelegate(delegate, queue)
         output.alwaysDiscardsLateVideoFrames = true
         if (session.canAddOutput(output)) session.addOutput(output)
+        session.commitConfiguration()
+
+        // After commit, not before: committing can pick a different active format, and the
+        // frame duration is a property of whichever format ends up active.
+        device?.let(::applyFrameRate)
 
         session.startRunning()
     }
 
-    actual suspend fun stop() {
+    actual suspend fun stop() = withContext(Dispatchers.Default) {
         session.stopRunning()
         input?.let { session.removeInput(it) }
         input = null
@@ -122,10 +146,18 @@ actual class CameraController actual constructor(private val config: CaptureConf
 
     actual fun switchCamera() {
         useFront = !useFront
-        session.beginConfiguration()
-        input?.let { session.removeInput(it) }
-        attachInput()
-        session.commitConfiguration()
+        // Swapping the input tears down and rebuilds the capture graph, which blocks for
+        // long enough to drop frames on the floor. It is triggered by a button, so without
+        // this hop it blocks the main thread. The delegate queue is the right place for it:
+        // running there means no sample is delivered mid-reconfiguration.
+        val target = queue ?: return
+        dispatch_async(target) {
+            session.beginConfiguration()
+            input?.let { session.removeInput(it) }
+            attachInput()
+            session.commitConfiguration()
+            device?.let(::applyFrameRate)
+        }
     }
 
     actual fun setTorch(enabled: Boolean) {
@@ -135,6 +167,24 @@ actual class CameraController actual constructor(private val config: CaptureConf
             current.lockForConfiguration(null)
             current.setTorchMode(if (enabled) AVCaptureTorchModeOn else AVCaptureTorchModeOff)
             current.unlockForConfiguration()
+        }
+    }
+
+    /**
+     * Caps the sensor at the streaming rate instead of letting it run at 30 fps only for the
+     * delegate to throw two frames in three away. The discarded frames are not free — the
+     * ISP still processes every one of them — and on a phone left broadcasting for hours the
+     * heat that buys nothing ends in thermal throttling, which is when delivery turns ragged.
+     *
+     * Only the *minimum* duration is set. Pinning the maximum too would stop the camera
+     * lengthening its exposure in a dark room, and a dark room is the whole point of this app.
+     */
+    private fun applyFrameRate(target: AVCaptureDevice) {
+        val duration = CMTimeMake(value = 1, timescale = config.fps)
+        runCatching {
+            target.lockForConfiguration(null)
+            target.activeVideoMinFrameDuration = duration
+            target.unlockForConfiguration()
         }
     }
 
@@ -227,12 +277,16 @@ actual class MicController actual constructor(private val config: AudioConfig) {
         }
     }
 
-    actual suspend fun stop() {
+    // Same reasoning as the camera: tearing the audio engine down and handing the session
+    // back are both blocking calls, and this is reached from the UI when the parent stops
+    // broadcasting.
+    actual suspend fun stop() = withContext(Dispatchers.Default) {
         runCatching {
             engine.inputNode.removeTapOnBus(0u)
             engine.stop()
             AVAudioSession.sharedInstance().setActive(false, null)
         }
+        Unit
     }
 
     private companion object {
