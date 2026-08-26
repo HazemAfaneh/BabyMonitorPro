@@ -52,7 +52,14 @@ fun App() {
                 val request = pending ?: return@LaunchedEffect
                 target = Watch(request.endpoint, request.autoAudio)
                 DeepLinks.consume()
-                navController.navigate(Routes.LIVE)
+                // singleTop, because this is the alarm path and it repeats. Every tapped
+                // alert notification arrives here, and without it each tap pushed a second
+                // live view on top of the first: two pictures drawn over each other with
+                // two status chips, and — the part that does not show up in a screenshot —
+                // two MJPEG streams, two control channels and two audio players running at
+                // once off one camera. The endpoint lives in [target] rather than the route,
+                // so reusing the entry still switches cameras.
+                navController.navigate(Routes.LIVE) { launchSingleTop = true }
             }
 
             NavHost(navController = navController, startDestination = Routes.ROLE) {
@@ -99,7 +106,7 @@ fun App() {
                     FindCameraScreen(
                         onConnect = { endpoint ->
                             target = Watch(endpoint, autoAudio = false)
-                            navController.navigate(Routes.LIVE)
+                            navController.navigate(Routes.LIVE) { launchSingleTop = true }
                         },
                         onBack = { navController.popBackStack() },
                     )

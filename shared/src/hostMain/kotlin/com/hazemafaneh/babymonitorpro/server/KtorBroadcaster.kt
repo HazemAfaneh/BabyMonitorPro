@@ -14,6 +14,7 @@ import com.hazemafaneh.babymonitorpro.core.nowMillis
 import com.hazemafaneh.babymonitorpro.detect.MotionDetector
 import com.hazemafaneh.babymonitorpro.detect.SoundDetector
 import com.hazemafaneh.babymonitorpro.discovery.createAdvertiser
+import com.hazemafaneh.babymonitorpro.notify.liveSessions
 import com.hazemafaneh.babymonitorpro.protocol.ControlMessage
 import com.hazemafaneh.babymonitorpro.protocol.DeviceInfoResponse
 import kotlinx.coroutines.CoroutineScope
@@ -73,7 +74,10 @@ class KtorBroadcaster : Broadcaster {
         outbound = eventFlow.asSharedFlow(),
         statusProvider = ::currentStatus,
         infoProvider = ::currentInfo,
-        onViewerCountChanged = { count -> _state.update { it.copy(viewerCount = count) } },
+        onViewerCountChanged = { count ->
+            _state.update { it.copy(viewerCount = count) }
+            publishBroadcastSession()
+        },
         onControlMessage = ::handleControlMessage,
     )
 
@@ -119,6 +123,10 @@ class KtorBroadcaster : Broadcaster {
         server.start(config.port)
         advertiser?.start(config.deviceName, config.port)
         PlatformBroadcastSession.begin(config.deviceName)
+        // Driven from here rather than from the camera screen: the screen is disposed the
+        // moment the parent opens Settings or backgrounds the app, and those are precisely
+        // the moments this surface exists for. The server's lifetime is the honest one.
+        liveSessions.startBroadcasting(config.deviceName)
 
         _state.value = BroadcastState(
             running = true,
@@ -133,6 +141,7 @@ class KtorBroadcaster : Broadcaster {
             motionSensitivity = config.motionSensitivity,
             soundSensitivity = config.soundSensitivity,
         )
+        publishBroadcastSession()
 
         scope.launch { verifyListening(config) }
     }
@@ -151,18 +160,33 @@ class KtorBroadcaster : Broadcaster {
                 if (runCatching { probe.fetchInfo() }.isSuccess) return
                 delay(SELF_CHECK_RETRY_MILLIS)
             }
-            _state.update {
-                it.copy(
-                    lastError = "Could not open port ${config.port}. " +
-                        "Another app may be using it — stop it and start broadcasting again.",
-                )
-            }
+            // Torn all the way down rather than left half-up. The capture pipeline was
+            // running the whole time this probe was failing, so leaving it there burns the
+            // camera and the battery to feed a socket nothing can reach — and the pairing
+            // card would still be printing an address that only ever refuses.
+            teardown()
+            _state.value = BroadcastState(
+                port = config.port,
+                portUnavailable = true,
+                lastError = "Port ${config.port} is already in use on this device.",
+            )
+            liveSessions.stopBroadcasting()
         } finally {
             probe.close()
         }
     }
 
     override suspend fun stop() {
+        teardown()
+        _state.value = BroadcastState(running = false)
+        liveSessions.stopBroadcasting()
+    }
+
+    /**
+     * Everything [stop] does except resetting the state, so the port-conflict path can tear
+     * the pipeline down and then publish a fault instead of a blank slate.
+     */
+    private suspend fun teardown() {
         videoJob?.cancelAndJoin()
         audioJob?.cancelAndJoin()
         videoJob = null
@@ -174,12 +198,18 @@ class KtorBroadcaster : Broadcaster {
         advertiser?.stop()
         server.stop()
         PlatformBroadcastSession.end()
-        _state.value = BroadcastState(running = false)
     }
 
     override fun requestStop() {
         // The broadcaster's own scope, not the caller's: this has to survive the caller.
         scope.launch { stop() }
+    }
+
+    override fun retryOnPort(port: Int) {
+        val previous = config ?: return
+        // The broadcaster's scope for the same reason as requestStop: the tap that starts
+        // this recomposes the screen that made it.
+        scope.launch { start(previous.copy(port = port)) }
     }
 
     override fun setSensitivity(motion: Int, sound: Int) {
@@ -206,6 +236,27 @@ class KtorBroadcaster : Broadcaster {
 
     override fun setTorch(enabled: Boolean) {
         camera?.setTorch(enabled)
+    }
+
+    /**
+     * Mirrors the current state onto the system's live surface.
+     *
+     * Same vocabulary the camera screen's status chip uses, because the two are read within
+     * seconds of each other and disagreeing about what the camera is doing would be worse
+     * than saying nothing.
+     */
+    private fun publishBroadcastSession() {
+        val snapshot = _state.value
+        if (!snapshot.running) return
+        liveSessions.updateBroadcasting(
+            statusLabel = when {
+                snapshot.syntheticVideo -> "Test pattern"
+                !snapshot.videoActive -> "Sound only"
+                else -> "Broadcasting"
+            },
+            viewerCount = snapshot.viewerCount,
+            address = snapshot.primaryAddress?.let { "$it:${snapshot.port}" },
+        )
     }
 
     private fun inspectForMotion(jpeg: ByteArray) {

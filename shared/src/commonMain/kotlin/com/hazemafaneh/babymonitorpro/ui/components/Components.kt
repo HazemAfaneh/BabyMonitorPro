@@ -1,5 +1,6 @@
 package com.hazemafaneh.babymonitorpro.ui.components
 
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
@@ -8,8 +9,11 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -23,6 +27,8 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import com.hazemafaneh.babymonitorpro.core.platformName
 import com.hazemafaneh.babymonitorpro.qr.QrEncoder
+import com.hazemafaneh.babymonitorpro.server.Broadcaster
+import com.hazemafaneh.babymonitorpro.ui.theme.Space
 
 @Composable
 fun SectionCard(
@@ -35,7 +41,7 @@ fun SectionCard(
         color = MaterialTheme.colorScheme.surface,
         shape = MaterialTheme.shapes.large,
     ) {
-        Column(Modifier.padding(20.dp)) {
+        Column(Modifier.padding(Space.md)) {
             Text(
                 text = title,
                 style = MaterialTheme.typography.labelLarge,
@@ -90,6 +96,41 @@ fun QrCode(
     }
 }
 
+/**
+ * Takes the camera offline, and then leaves the screen. In that order, and never one without
+ * the other.
+ *
+ * It lives here rather than in either screen because it is on both of them, and when the two
+ * spelled the action out separately one of them navigated away while the server kept running
+ * — the parent saw the role picker, every viewer kept its picture, and the camera stayed
+ * reachable to anyone on the WiFi. Stopping is the whole point of the control; it cannot be
+ * left to the call site to remember.
+ *
+ * Outlined and error-toned, never filled: this is the one destructive control in the app, and
+ * an outline reads as deliberate where a filled error button reads as the obvious next step.
+ */
+@Composable
+fun StopBroadcastingButton(
+    broadcaster: Broadcaster?,
+    onStopped: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    OutlinedButton(
+        onClick = {
+            broadcaster?.requestStop()
+            onStopped()
+        },
+        modifier = modifier.fillMaxWidth().heightIn(min = STOP_BUTTON_HEIGHT),
+        shape = MaterialTheme.shapes.medium,
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.error),
+        colors = ButtonDefaults.outlinedButtonColors(
+            contentColor = MaterialTheme.colorScheme.error,
+        ),
+    ) {
+        Text("Stop broadcasting", style = MaterialTheme.typography.labelLarge)
+    }
+}
+
 @Composable
 fun PrivacyNote(modifier: Modifier = Modifier) {
     Text(
@@ -102,5 +143,6 @@ fun PrivacyNote(modifier: Modifier = Modifier) {
     )
 }
 
+private val STOP_BUTTON_HEIGHT = 56.dp
 private val QR_LIGHT = Color(0xFFF4F1EA)
 private val QR_DARK = Color(0xFF12131A)

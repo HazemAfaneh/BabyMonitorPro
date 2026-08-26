@@ -68,7 +68,7 @@ fun RolePickerScreen(
 
                 RoleCard(
                     title = "Use this device as Camera",
-                    subtitle = "Stays in the nursery. Broadcasts video and sound to your other devices.",
+                    subtitle = "Stays in the room you are watching. Broadcasts video and sound to your other devices.",
                     accent = true,
                     highlighted = lastRole == Role.CAMERA,
                     onClick = { onPick(Role.CAMERA) },
@@ -79,7 +79,7 @@ fun RolePickerScreen(
             RoleCard(
                 title = "Watch a camera",
                 subtitle = if (supportsCameraRole) {
-                    "Find the nursery camera on this network and open the live view."
+                    "Find the camera on this network and open the live view."
                 } else {
                     // Not an apology. A browser cannot host a server, and saying so is more
                     // use than a card that fails when tapped.
@@ -118,7 +118,7 @@ private fun RoleCard(
         else MaterialTheme.colorScheme.surface,
         shape = MaterialTheme.shapes.extraLarge,
     ) {
-        Column(Modifier.padding(Space.xl)) {
+        Column(Modifier.padding(Space.lg)) {
             Row(
                 Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,

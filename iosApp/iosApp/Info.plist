@@ -5,11 +5,16 @@
 	<key>CADisableMinimumFrameDurationOnPhone</key>
 	<true/>
 
+	<!-- Live Activities: the broadcasting / watching session on the Lock Screen and in the
+	     Dynamic Island. Without this key ActivityKit refuses every request. -->
+	<key>NSSupportsLiveActivities</key>
+	<true/>
+
 	<!-- Camera role: capture. Viewer role: scanning a pairing code. -->
 	<key>NSCameraUsageDescription</key>
 	<string>BabyMonitor Pro uses the camera to stream video to your other devices on this WiFi network, and to scan a camera's pairing code.</string>
 	<key>NSMicrophoneUsageDescription</key>
-	<string>BabyMonitor Pro uses the microphone to stream sound from the nursery to your other devices on this WiFi network.</string>
+	<string>BabyMonitor Pro uses the microphone to stream sound from this room to your other devices on this WiFi network.</string>
 
 	<!-- Required from iOS 14 for mDNS: without both keys, Bonjour silently finds nothing. -->
 	<key>NSLocalNetworkUsageDescription</key>

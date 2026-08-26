@@ -35,7 +35,22 @@ data class BroadcastState(
     val motionSensitivity: Int = 50,
     val soundSensitivity: Int = 50,
     val lastError: String? = null,
+    /**
+     * The port could not be opened — almost always another copy of this app, or something
+     * else already sitting on 8080.
+     *
+     * Carried as its own flag rather than left inside [lastError] because it is the one
+     * fault the parent can fix from this screen: the banner it raises has an action, and a
+     * banner with an action cannot be driven off a prose string.
+     */
+    val portUnavailable: Boolean = false,
 ) {
+    /**
+     * The port to offer instead when [portUnavailable]. One above whatever was tried, so a
+     * second retry moves on again rather than re-offering a port already known to be taken.
+     */
+    val alternatePort: Int get() = port + 1
+
     /**
      * The address the pairing card offers, or null when there is nothing worth offering yet.
      *
@@ -63,6 +78,15 @@ interface Broadcaster {
 
     suspend fun start(config: BroadcastConfig)
     suspend fun stop()
+
+    /**
+     * Restart on a different port after [BroadcastState.portUnavailable].
+     *
+     * Here rather than in the camera screen because the broadcaster already holds the
+     * config that failed: the screen only knows which port to try next, not the eight other
+     * fields that have to come back unchanged with it.
+     */
+    fun retryOnPort(port: Int)
 
     /**
      * Fire-and-forget shutdown for teardown paths — leaving the camera screen cancels the

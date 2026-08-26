@@ -52,7 +52,7 @@ private fun StatusTone.color(): Color = when (this) {
  * The chip that answers "is this thing working" from across a dark room. One steady dot and
  * a word.
  *
- * The dot never pulses or blinks. Anything that blinks in a dark nursery is a thing the
+ * The dot never pulses or blinks. Anything that blinks in a dark bedroom is a thing the
  * parent learns to tune out within a night, and it lights the room while it does it — so the
  * signal is the dot's *colour*, which costs no motion and no light.
  *

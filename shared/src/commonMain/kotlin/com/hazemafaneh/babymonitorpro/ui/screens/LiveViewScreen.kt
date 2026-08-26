@@ -49,6 +49,7 @@ import com.hazemafaneh.babymonitorpro.client.ViewerClient
 import com.hazemafaneh.babymonitorpro.core.AudioConfig
 import com.hazemafaneh.babymonitorpro.core.CameraEndpoint
 import com.hazemafaneh.babymonitorpro.core.nowMillis
+import com.hazemafaneh.babymonitorpro.notify.liveSessions
 import com.hazemafaneh.babymonitorpro.notify.notifyAlert
 import com.hazemafaneh.babymonitorpro.protocol.ControlMessage
 import com.hazemafaneh.babymonitorpro.ui.KeepScreenAwake
@@ -92,11 +93,14 @@ fun LiveViewScreen(
     onBack: () -> Unit,
     autoAudio: Boolean = false,
 ) {
-    var status by remember { mutableStateOf(VideoStatus.CONNECTING) }
-    var cameraStatus by remember { mutableStateOf<ControlMessage.Status?>(null) }
-    var latencyMillis by remember { mutableStateOf<Long?>(null) }
-    var alert by remember { mutableStateOf<Alert?>(null) }
-    var failure by remember { mutableStateOf<String?>(null) }
+    // All keyed on the endpoint: the live view is now singleTop, so the same composition is
+    // reused when the parent switches cameras. Unkeyed, the new camera inherited the old
+    // one's status, latency and last error — which is the one lie this screen must not tell.
+    var status by remember(endpoint.id) { mutableStateOf(VideoStatus.CONNECTING) }
+    var cameraStatus by remember(endpoint.id) { mutableStateOf<ControlMessage.Status?>(null) }
+    var latencyMillis by remember(endpoint.id) { mutableStateOf<Long?>(null) }
+    var alert by remember(endpoint.id) { mutableStateOf<Alert?>(null) }
+    var failure by remember(endpoint.id) { mutableStateOf<String?>(null) }
     var audioOn by remember { mutableStateOf(autoAudio) }
     var controlsVisible by remember { mutableStateOf(true) }
     var lastInteraction by remember { mutableStateOf(nowMillis()) }
@@ -112,6 +116,25 @@ fun LiveViewScreen(
     val audioPlayer = remember(endpoint.id) { createAudioPlayer(AudioConfig()) }
 
     KeepScreenAwake(enabled = true)
+
+    // The watching session on the Lock Screen and in the Dynamic Island, for exactly as long
+    // as this screen is up. Keyed on the endpoint so switching cameras ends one session and
+    // starts another rather than relabelling the first.
+    DisposableEffect(endpoint.id) {
+        liveSessions.startViewing(endpoint)
+        onDispose { liveSessions.stopViewing() }
+    }
+
+    // The status chip's own words, so a glance at the phone face-down on the bed and a glance
+    // at the app say the same thing. This is also how an alert reaches the Lock Screen: the
+    // running session is updated in place rather than a second notification being posted on
+    // top of it — see [raiseAlert].
+    LaunchedEffect(status, alert) {
+        liveSessions.updateViewing(
+            statusLabel = status.describe().first,
+            alert = alert?.label,
+        )
+    }
 
     LaunchedEffect(lastInteraction, window) {
         controlsVisible = true
@@ -147,13 +170,13 @@ fun LiveViewScreen(
                                 val raised = Alert("Movement detected", message.atMillis)
                                 alert = raised
                                 alertHistory.record(raised)
-                                notifyAlert(endpoint.named(cameraStatus), "Movement detected")
+                                raiseAlert(endpoint.named(cameraStatus), raised.label)
                             }
                             is ControlMessage.SoundEvent -> {
                                 val raised = Alert("Sound detected", message.atMillis)
                                 alert = raised
                                 alertHistory.record(raised)
-                                notifyAlert(endpoint.named(cameraStatus), "Sound detected")
+                                raiseAlert(endpoint.named(cameraStatus), raised.label)
                             }
                             else -> Unit
                         }
@@ -262,7 +285,6 @@ fun LiveViewScreen(
                 name = cameraStatus?.deviceName ?: endpoint.name,
                 address = endpoint.id,
                 history = alertHistory,
-                onBack = onBack,
             )
         }
     }
@@ -632,7 +654,6 @@ private fun SideRail(
     name: String,
     address: String,
     history: List<Alert>,
-    onBack: () -> Unit,
 ) {
     Column(
         Modifier
@@ -654,7 +675,11 @@ private fun SideRail(
             style = MaterialTheme.typography.bodySmall,
         )
         Spacer(Modifier.height(Space.xxs))
-        PrivacyLine(address)
+        // Deliberately the address-less form. The line above already prints the address in
+        // monospace, for reading aloud; repeating it here as "On your WiFi · <address>" put
+        // the same string on the screen twice in two fonts, which reads as a rendering
+        // fault rather than as reassurance.
+        PrivacyLine(null)
 
         Spacer(Modifier.height(Space.xl))
         SectionLabel("Recent alerts")
@@ -687,8 +712,6 @@ private fun SideRail(
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
 
-        Spacer(Modifier.height(Space.xl))
-        TextButton(onClick = onBack) { Text("Close") }
     }
 }
 
@@ -707,6 +730,20 @@ private fun CameraEndpoint.named(status: ControlMessage.Status?): CameraEndpoint
 
 private data class Alert(val label: String, val atMillis: Long)
 
+/**
+ * Puts a motion or sound alert in front of the parent, on every surface at once.
+ *
+ * Both, deliberately, and not one or the other. Updating the live session changes what the
+ * Lock Screen and the Dynamic Island show, but it makes no sound and no haptic — ActivityKit
+ * updates are silent, and the library's bridge exposes no alert configuration — so a session
+ * on its own reaches a parent who is looking and nobody else. The notification is what reaches
+ * a parent who is asleep. The session then carries the same alert onward, staying current
+ * after the banner has been dismissed.
+ */
+private fun raiseAlert(endpoint: CameraEndpoint, message: String) {
+    notifyAlert(endpoint, message)
+}
+
 /** Newest first, capped — this is a glance-at list, not a log. */
 private fun MutableList<Alert>.record(alert: Alert) {
     add(0, alert)
@@ -717,15 +754,16 @@ private fun VideoStatus.describe(): Pair<String, StatusTone> = when (this) {
     VideoStatus.CONNECTING -> "Connecting" to StatusTone.WAITING
     VideoStatus.LIVE -> "Live" to StatusTone.LIVE
     VideoStatus.RECONNECTING -> "Reconnecting" to StatusTone.WAITING
-    VideoStatus.NO_VIDEO -> "Connected · no picture" to StatusTone.FAULT
+    VideoStatus.NO_PICTURE -> "Connected · no picture" to StatusTone.FAULT
     VideoStatus.FAILED -> "Camera stopped" to StatusTone.FAULT
 }
 
 private fun VideoStatus.reason(): String? = when (this) {
     VideoStatus.RECONNECTING ->
-        "The nursery device moved to another access point. Retrying."
-    VideoStatus.NO_VIDEO ->
-        "The camera is answering but sending no frames. Sound is unaffected."
+        "The camera device moved to another access point. Retrying every 2 seconds."
+    VideoStatus.NO_PICTURE ->
+        "The camera is answering on the control channel but sending no frames. " +
+            "Sound is unaffected."
     VideoStatus.FAILED ->
         // Naming the cause points at the thing that can be fixed. "No connection" sent the
         // parent to check their WiFi, which is rarely what stopped.
@@ -735,8 +773,8 @@ private fun VideoStatus.reason(): String? = when (this) {
 
 private fun emptyPictureText(status: VideoStatus, endpoint: CameraEndpoint): String? = when (status) {
     VideoStatus.CONNECTING -> "Reaching ${endpoint.id} on this network."
-    VideoStatus.NO_VIDEO -> "No frame for 8 seconds."
-    VideoStatus.FAILED -> "The nursery device closed BabyMonitor Pro."
+    VideoStatus.NO_PICTURE -> "No frame for 8 seconds."
+    VideoStatus.FAILED -> "The camera device closed BabyMonitor Pro."
     else -> null
 }
 

@@ -86,15 +86,17 @@ internal fun MjpegFrameLoop(
                         // pictures that stopped. Reported apart from a dead connection so
                         // the parent is not sent to check their WiFi over a working one.
                         cause is StalledStreamException ||
-                            cause is UndecodableStreamException -> VideoStatus.NO_VIDEO
+                            cause is UndecodableStreamException -> VideoStatus.NO_PICTURE
                         else -> VideoStatus.FAILED
                     },
                 )
                 onError(cause?.message ?: cause?.toString() ?: "Unknown error")
             }
             attempt++
-            // A nursery camera gets carried around; reconnect quietly rather than
-            // dumping the parent back to the device list.
+            // A camera device gets carried around; reconnect quietly rather than
+            // dumping the parent back to the device list. Two seconds, because the
+            // reconnecting copy tells the parent that is the interval — a cadence the
+            // screen states out loud is one the loop has to keep.
             delay(RECONNECT_DELAY_MILLIS)
         }
     }
@@ -111,6 +113,6 @@ internal class UndecodableStreamException(received: Int) : Exception(
     "Received $received frames from the camera but none could be decoded.",
 )
 
-private const val RECONNECT_DELAY_MILLIS = 1500L
+private const val RECONNECT_DELAY_MILLIS = 2000L
 private const val STALL_CHECK_MILLIS = 1000L
 private const val STALL_TIMEOUT_MILLIS = 8000L

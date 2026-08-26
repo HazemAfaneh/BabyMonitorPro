@@ -16,7 +16,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 
 // Deep charcoal-indigo surfaces with a single warm amber accent. Nothing on the dark
-// theme is pure white — a nursery at 3am is the design brief.
+// theme is pure white — a dark bedroom at 3am is the design brief.
 //
 // Amber is the right accent for this product for a physical reason: long-wavelength light at
 // low luminance is the least disruptive thing you can put in a dark bedroom, and it is the

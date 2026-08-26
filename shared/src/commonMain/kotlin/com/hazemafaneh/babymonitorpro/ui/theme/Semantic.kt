@@ -66,10 +66,10 @@ object Space {
     val md = 16.dp
     /** Screen gutter on a phone. */
     val lg = 20.dp
-    /** Card padding, role cards. */
+    /** Role cards, and the widest gutter a phone gets. */
     val xl = 24.dp
     /** Screen gutter on a tablet or desktop. */
-    val xxl = 36.dp
+    val xxl = 28.dp
 }
 
 object Touch {

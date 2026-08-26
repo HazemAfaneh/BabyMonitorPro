@@ -129,7 +129,7 @@ actual class CameraController actual constructor(private val config: CaptureConf
     // freeze of the whole app, Compose included.
     actual suspend fun start() = withContext(Dispatchers.Default) {
         // Read on the main thread, where UIKit insists device orientation is read, and then
-        // held for the life of the broadcast. A nursery camera is put down in one position
+        // held for the life of the broadcast. A camera device is put down in one position
         // and left there; a stream that reorients itself because somebody nudged the phone
         // is worse than one that keeps the framing it was set up with.
         orientation = withContext(Dispatchers.Main) { currentVideoOrientation() }
@@ -190,7 +190,7 @@ actual class CameraController actual constructor(private val config: CaptureConf
      * Rotates the delivered buffers to match how the phone is being held.
      *
      * Without this the frames arrive in the sensor's own orientation — landscape, with no
-     * regard for the device — so a phone stood upright in a nursery streams a picture lying
+     * regard for the device — so a phone stood upright on a shelf streams a picture lying
      * on its side. Android has always corrected for this by rotating each bitmap by the
      * analyser's `rotationDegrees`; iOS was sending whatever the camera handed over.
      *
