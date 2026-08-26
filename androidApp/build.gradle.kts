@@ -15,6 +15,11 @@ dependencies {
 
     implementation(libs.androidx.activity.compose)
 
+    // Declared here as well as in :shared because the Live Update renderers live in this
+    // module — they produce Android notification content, which :shared deliberately cannot
+    // name — and :shared takes the library as an `implementation` dependency.
+    implementation(libs.live.activities)
+
     implementation(libs.compose.uiToolingPreview)
     debugImplementation(libs.compose.uiTooling)
 }

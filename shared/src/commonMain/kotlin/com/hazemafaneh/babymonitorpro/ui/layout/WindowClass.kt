@@ -55,10 +55,22 @@ fun windowHeight(): Dp {
     return with(density) { LocalWindowInfo.current.containerSize.height.toDp() }
 }
 
-/** Screen gutter: tighter on a phone, where horizontal space is the scarce thing. */
+/**
+ * Screen gutter, stepping with the width class.
+ *
+ * A phone gets the smallest of the three because the gutter is never paid alone: every card
+ * adds its own padding inside it, so a 20dp gutter around a 20dp card inset the text 40dp of
+ * a 393dp screen — a tenth of the width, twice, spent on nothing. 16dp still keeps content
+ * clear of the edge and hands the difference back to the pairing address and the picture,
+ * which are what the screen is for.
+ */
 @Composable
 @ReadOnlyComposable
-fun WindowClass.gutter(): Dp = if (isCompact) Space.lg else Space.xxl
+fun WindowClass.gutter(): Dp = when (this) {
+    WindowClass.COMPACT -> Space.md
+    WindowClass.MEDIUM -> Space.xl
+    WindowClass.EXPANDED -> Space.xxl
+}
 
 private val MEDIUM_BREAKPOINT = 600.dp
 private val EXPANDED_BREAKPOINT = 840.dp

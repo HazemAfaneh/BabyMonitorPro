@@ -74,7 +74,18 @@ kotlin {
         val jvmAndroidMain by creating { dependsOn(hostMain) }
         androidMain.get().dependsOn(jvmAndroidMain)
         jvmMain.get().dependsOn(jvmAndroidMain)
-        iosMain.get().dependsOn(hostMain)
+        // The two targets with a system-owned live surface — iOS Live Activities and
+        // Android 16 Live Updates. The library is published for android and ios* only, so
+        // this is the widest source set that can see it; desktop and the browser take the
+        // no-op LiveSessions from commonMain instead.
+        val mobileMain by creating {
+            dependsOn(hostMain)
+            dependencies {
+                implementation(libs.live.activities)
+            }
+        }
+        androidMain.get().dependsOn(mobileMain)
+        iosMain.get().dependsOn(mobileMain)
 
         androidMain.dependencies {
             implementation(libs.compose.uiToolingPreview)

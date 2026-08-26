@@ -5,6 +5,8 @@ import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.graphics.Matrix
 import android.util.Size
+import android.view.OrientationEventListener
+import android.view.Surface
 import android.media.AudioFormat
 import android.media.AudioRecord
 import android.media.MediaRecorder
@@ -58,11 +60,44 @@ actual class CameraController actual constructor(private val config: CaptureConf
 
     private var provider: ProcessCameraProvider? = null
     private var camera: Camera? = null
+    private var analysis: ImageAnalysis? = null
     private var lensFacing =
         if (config.useFrontCamera) CameraSelector.LENS_FACING_FRONT else CameraSelector.LENS_FACING_BACK
     private var lastEmittedAt = 0L
 
     actual val frames: Flow<ByteArray> = frameFlow.asSharedFlow()
+
+    /**
+     * Keeps [ImageAnalysis.setTargetRotation] pointed at how the device is physically lying.
+     *
+     * This is the fix for a picture that arrives on its side, and the reason it has to be the
+     * *device's* orientation rather than the display's is two-fold. The activity declares
+     * `configChanges="orientation|screenSize"`, so turning the device never recreates it and
+     * CameraX never rebinds — leaving the target rotation frozen at whatever it was when the
+     * broadcast started. And a camera propped on a shelf is very often a device with rotation
+     * lock on, where the display orientation has stopped describing the world entirely.
+     *
+     * It also makes tablets work. `targetRotation` is expressed relative to the device's
+     * *natural* orientation, which on a Galaxy Tab S8+ is landscape, not portrait — CameraX
+     * combines it with the sensor's own mounting angle, so the same code that is correct on a
+     * portrait-natural phone is correct here too. Reading the display and assuming a phone is
+     * exactly what put the tablet's picture 90° out.
+     */
+    private val orientationListener = object : OrientationEventListener(context) {
+        override fun onOrientationChanged(orientation: Int) {
+            // A device lying flat has no meaningful orientation; keep the last good one
+            // rather than snapping the picture round because it was picked up.
+            if (orientation == ORIENTATION_UNKNOWN) return
+            val rotation = when (orientation) {
+                in 45 until 135 -> Surface.ROTATION_270
+                in 135 until 225 -> Surface.ROTATION_180
+                in 225 until 315 -> Surface.ROTATION_90
+                else -> Surface.ROTATION_0
+            }
+            // Settable on a live use case: no rebind, no dropped frames, no torn-down server.
+            analysis?.targetRotation = rotation
+        }
+    }
 
     actual suspend fun start() {
         val cameraProvider = awaitCameraProvider()
@@ -70,15 +105,18 @@ actual class CameraController actual constructor(private val config: CaptureConf
             provider = cameraProvider
             lifecycleOwner.markResumed()
             bind(cameraProvider)
+            if (orientationListener.canDetectOrientation()) orientationListener.enable()
         }
     }
 
     actual suspend fun stop() {
         withContext(Dispatchers.Main) {
+            orientationListener.disable()
             provider?.unbindAll()
             lifecycleOwner.markDestroyed()
             provider = null
             camera = null
+            analysis = null
         }
         analysisExecutor.shutdown()
     }
@@ -101,7 +139,7 @@ actual class CameraController actual constructor(private val config: CaptureConf
     }
 
     private fun bind(cameraProvider: ProcessCameraProvider) {
-        val analysis = ImageAnalysis.Builder()
+        val useCase = ImageAnalysis.Builder()
             .setOutputImageFormat(ImageAnalysis.OUTPUT_IMAGE_FORMAT_RGBA_8888)
             // The stream is live: a late frame is worth less than the current one.
             .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
@@ -124,11 +162,12 @@ actual class CameraController actual constructor(private val config: CaptureConf
             )
             .build()
 
-        analysis.setAnalyzer(analysisExecutor) { image -> onImage(image) }
+        useCase.setAnalyzer(analysisExecutor) { image -> onImage(image) }
+        analysis = useCase
 
         val selector = CameraSelector.Builder().requireLensFacing(lensFacing).build()
         camera = runCatching {
-            cameraProvider.bindToLifecycle(lifecycleOwner, selector, analysis)
+            cameraProvider.bindToLifecycle(lifecycleOwner, selector, useCase)
         }.onFailure {
             // Swallowing this silently makes a dead camera indistinguishable from a working
             // one: the server still answers /stream, just with a body that never produces

@@ -39,6 +39,7 @@ import com.hazemafaneh.babymonitorpro.store.AppSettings
 import com.hazemafaneh.babymonitorpro.ui.components.SectionCard
 import com.hazemafaneh.babymonitorpro.ui.layout.gutter
 import com.hazemafaneh.babymonitorpro.ui.layout.rememberWindowClass
+import com.hazemafaneh.babymonitorpro.ui.components.StopBroadcastingButton
 import com.hazemafaneh.babymonitorpro.ui.theme.Space
 import com.hazemafaneh.babymonitorpro.ui.theme.Touch
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -195,21 +196,7 @@ fun CameraSettingsScreen(
 
         Spacer(Modifier.height(Space.lg))
 
-        // Outlined and error-toned. This is the one control that takes the nursery offline,
-        // and it used to look exactly like every other neutral surface on the screen.
-        OutlinedButton(
-            onClick = {
-                broadcaster?.requestStop()
-                onStop()
-            },
-            modifier = Modifier.fillMaxWidth().height(56.dp),
-        ) {
-            Text(
-                text = "Stop broadcasting",
-                color = MaterialTheme.colorScheme.error,
-                style = MaterialTheme.typography.titleSmall,
-            )
-        }
+        StopBroadcastingButton(broadcaster, onStop)
 
         Spacer(Modifier.height(Space.xl))
     }

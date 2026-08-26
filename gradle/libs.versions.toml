@@ -15,6 +15,7 @@ jmdns = "3.6.3"
 junit = "4.13.2"
 koin = "4.2.2"
 kotlin = "2.4.10"
+liveActivities = "0.1.0"
 kotlin-wrappers = "2026.7.7"
 kotlinx-coroutines = "1.11.0"
 kotlinx-datetime = "0.8.0"
@@ -58,6 +59,10 @@ koin-core = { module = "io.insert-koin:koin-core", version.ref = "koin" }
 koin-compose = { module = "io.insert-koin:koin-compose", version.ref = "koin" }
 koin-compose-viewmodel = { module = "io.insert-koin:koin-compose-viewmodel", version.ref = "koin" }
 koin-android = { module = "io.insert-koin:koin-android", version.ref = "koin" }
+
+# iOS Live Activities + Android 16 Live Updates behind one API. Published for android and
+# ios* only — hence the mobileMain source set in :shared rather than a commonMain dependency.
+live-activities = { module = "io.github.hazemafaneh.liveactivities:live-activities", version.ref = "liveActivities" }
 
 ktor-server-core = { module = "io.ktor:ktor-server-core", version.ref = "ktor" }
 ktor-server-cio = { module = "io.ktor:ktor-server-cio", version.ref = "ktor" }

@@ -8,12 +8,12 @@ import com.hazemafaneh.babymonitorpro.core.CameraEndpoint
 /**
  * Connection lifecycle of a video surface, surfaced as the live view's status chip.
  *
- * [NO_VIDEO] is deliberately distinct from [FAILED]: a camera that answers on the control
+ * [NO_PICTURE] is deliberately distinct from [FAILED]: a camera that answers on the control
  * channel while sending no frames is the most dangerous state in the app, because the parent
  * sees a black rectangle that a healthy-looking status has told them to trust. "Not
  * connected" and "connected, but blind" need different words and different answers.
  */
-enum class VideoStatus { CONNECTING, LIVE, RECONNECTING, NO_VIDEO, FAILED }
+enum class VideoStatus { CONNECTING, LIVE, RECONNECTING, NO_PICTURE, FAILED }
 
 /**
  * Renders the camera's MJPEG stream.

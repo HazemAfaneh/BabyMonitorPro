@@ -38,7 +38,9 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.hazemafaneh.babymonitorpro.core.CameraEndpoint
 import com.hazemafaneh.babymonitorpro.core.PairingUri
+import com.hazemafaneh.babymonitorpro.core.isLinkLocalIpv4
 import com.hazemafaneh.babymonitorpro.discovery.createBrowser
+import com.hazemafaneh.babymonitorpro.discovery.ownLanAddresses
 import com.hazemafaneh.babymonitorpro.store.AppSettings
 import com.hazemafaneh.babymonitorpro.ui.components.Chevron
 import com.hazemafaneh.babymonitorpro.ui.components.MonoValue
@@ -78,9 +80,25 @@ fun FindCameraScreen(
     var manualOpen by remember { mutableStateOf(false) }
 
     val browser = remember { createBrowser() }
-    val discovered by remember(browser) {
+    val announced by remember(browser) {
         browser?.cameras ?: MutableStateFlow(emptyList<CameraEndpoint>())
     }.collectAsState()
+
+    // What is left after this device stops offering itself.
+    //
+    // Two things get dropped. A device in the camera role hears its own mDNS advertisement,
+    // so the list handed the parent their own phone to go and watch — the one device that
+    // cannot be the answer. And a link-local 169.254 host is one nothing on the WiFi can
+    // reach, so offering it only produces a connection that refuses, with the camera taking
+    // the blame; the pairing card already withholds those for the same reason.
+    //
+    // Recomputed when the announcements change rather than on every recomposition:
+    // enumerating interfaces is a syscall, and a new list is the only thing that can change
+    // the answer.
+    val discovered = remember(announced) {
+        val own = ownLanAddresses()
+        announced.filterNot { it.host in own || isLinkLocalIpv4(it.host) }
+    }
 
     DisposableEffect(browser) {
         browser?.start()
@@ -155,7 +173,7 @@ fun FindCameraScreen(
 
                     discovered.isEmpty() -> EmptyNote(
                         title = "Still looking",
-                        note = "Open BabyMonitor Pro on the nursery device and choose " +
+                        note = "Open BabyMonitor Pro on the camera device and choose " +
                             "\"Use this device as Camera\".",
                     )
 

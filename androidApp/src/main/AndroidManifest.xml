@@ -16,6 +16,9 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CAMERA" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- Android 16 Live Updates: without this the broadcasting/watching notification still
+         posts, but never gets the status-bar chip or the top-of-shade slot. -->
+    <uses-permission android:name="android.permission.POST_PROMOTED_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
 
     <uses-feature android:name="android.hardware.camera.any" android:required="false" />
@@ -51,7 +54,7 @@
             </intent-filter>
         </activity>
 
-        <!-- Keeps capture alive while the nursery phone's screen is off. -->
+        <!-- Keeps capture alive while the camera phone's screen is off. -->
         <service
             android:name="com.hazemafaneh.babymonitorpro.server.BroadcastService"
             android:exported="false"

@@ -15,8 +15,8 @@ import android.util.Log
 import androidx.core.content.ContextCompat
 
 /**
- * Keeps the process alive and the camera bound while the phone acting as the nursery
- * camera sits with its screen off. Holds no capture state of its own — the broadcaster
+ * Keeps the process alive and the camera bound while the phone acting as the camera sits
+ * with its screen off. Holds no capture state of its own — the broadcaster
  * owns that; this is purely the Android lifecycle contract.
  */
 class BroadcastService : Service() {
