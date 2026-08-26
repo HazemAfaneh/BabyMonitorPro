@@ -21,6 +21,11 @@ kotlin {
         iosTarget.binaries.framework {
             baseName = "Shared"
             isStatic = true
+            // ActivityKit is Swift-only, so the Live Activity bridge is implemented in Swift
+            // in iosApp and installed via LiveActivityManager.register. Both of those types
+            // come from the library, so without this export they are absent from Shared.h and
+            // the Swift side cannot see them at all.
+            export(libs.live.activities)
         }
     }
 
@@ -81,7 +86,9 @@ kotlin {
         val mobileMain by creating {
             dependsOn(hostMain)
             dependencies {
-                implementation(libs.live.activities)
+                // `api`, not `implementation`: a framework `export` is only permitted for
+                // dependencies on the API surface.
+                api(libs.live.activities)
             }
         }
         androidMain.get().dependsOn(mobileMain)

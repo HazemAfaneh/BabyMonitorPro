@@ -6,9 +6,40 @@
 	objectVersion = 77;
 	objects = {
 
+/* Begin PBXBuildFile section */
+		B1A0C4E27F3D48A19C0E551C /* BabyMonitorWidgets.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = B1A0C4E27F3D48A19C0E5511 /* BabyMonitorWidgets.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		B1A0C4E27F3D48A19C0E5522 /* KMPLiveActivities in Frameworks */ = {isa = PBXBuildFile; productRef = B1A0C4E27F3D48A19C0E5520 /* KMPLiveActivities */; };
+		B1A0C4E27F3D48A19C0E5523 /* KMPLiveActivities in Frameworks */ = {isa = PBXBuildFile; productRef = B1A0C4E27F3D48A19C0E5521 /* KMPLiveActivities */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		B1A0C4E27F3D48A19C0E551E /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 09B04B20617912CF5AFF19FE /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = B1A0C4E27F3D48A19C0E5514;
+			remoteInfo = BabyMonitorWidgets;
+		};
+/* End PBXContainerItemProxy section */
+
 /* Begin PBXFileReference section */
 		2C543E3759A3890795769A01 /* BabyMonitor Pro.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "BabyMonitor Pro.app"; sourceTree = BUILT_PRODUCTS_DIR; };
+		B1A0C4E27F3D48A19C0E5511 /* BabyMonitorWidgets.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = BabyMonitorWidgets.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
+
+/* Begin PBXCopyFilesBuildPhase section */
+		B1A0C4E27F3D48A19C0E551B /* Embed Foundation Extensions */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 13;
+			files = (
+				B1A0C4E27F3D48A19C0E551C /* BabyMonitorWidgets.appex in Embed Foundation Extensions */,
+			);
+			name = "Embed Foundation Extensions";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
 		E82C1B16712DAC359DA29807 /* Exceptions for "iosApp" folder in "iosApp" target */ = {
@@ -17,6 +48,13 @@
 				Info.plist,
 			);
 			target = 17E5F54FBD11D3D966614C5E /* iosApp */;
+		};
+		B1A0C4E27F3D48A19C0E5513 /* Exceptions for "BabyMonitorWidgets" folder in "BabyMonitorWidgets" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Info.plist,
+			);
+			target = B1A0C4E27F3D48A19C0E5514 /* BabyMonitorWidgets */;
 		};
 /* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
 
@@ -34,6 +72,14 @@
 			path = Configuration;
 			sourceTree = "<group>";
 		};
+		B1A0C4E27F3D48A19C0E5512 /* BabyMonitorWidgets */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				B1A0C4E27F3D48A19C0E5513 /* Exceptions for "BabyMonitorWidgets" folder in "BabyMonitorWidgets" target */,
+			);
+			path = BabyMonitorWidgets;
+			sourceTree = "<group>";
+		};
 /* End PBXFileSystemSynchronizedRootGroup section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -41,6 +87,15 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				B1A0C4E27F3D48A19C0E5522 /* KMPLiveActivities in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		B1A0C4E27F3D48A19C0E5516 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				B1A0C4E27F3D48A19C0E5523 /* KMPLiveActivities in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -52,6 +107,7 @@
 			children = (
 				5C7A8FB4C83093CFF197F49E /* Configuration */,
 				4653CAB727973733F0B722EF /* iosApp */,
+				B1A0C4E27F3D48A19C0E5512 /* BabyMonitorWidgets */,
 				CF6D363D52BF974221BF02BC /* Products */,
 			);
 			sourceTree = "<group>";
@@ -60,6 +116,7 @@
 			isa = PBXGroup;
 			children = (
 				2C543E3759A3890795769A01 /* BabyMonitor Pro.app */,
+				B1A0C4E27F3D48A19C0E5511 /* BabyMonitorWidgets.appex */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -75,20 +132,46 @@
 				DDD96AF715880B1CFA57A856 /* Sources */,
 				0F09B8D6A0F3BE3AEC0EA861 /* Frameworks */,
 				3396A56D0BF24F97C4D7B66D /* Resources */,
+				B1A0C4E27F3D48A19C0E551B /* Embed Foundation Extensions */,
 			);
 			buildRules = (
 			);
 			dependencies = (
+				B1A0C4E27F3D48A19C0E551D /* PBXTargetDependency */,
 			);
 			fileSystemSynchronizedGroups = (
 				4653CAB727973733F0B722EF /* iosApp */,
 			);
 			name = iosApp;
 			packageProductDependencies = (
+				B1A0C4E27F3D48A19C0E5520 /* KMPLiveActivities */,
 			);
 			productName = iosApp;
 			productReference = 2C543E3759A3890795769A01 /* BabyMonitor Pro.app */;
 			productType = "com.apple.product-type.application";
+		};
+		B1A0C4E27F3D48A19C0E5514 /* BabyMonitorWidgets */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = B1A0C4E27F3D48A19C0E551A /* Build configuration list for PBXNativeTarget "BabyMonitorWidgets" */;
+			buildPhases = (
+				B1A0C4E27F3D48A19C0E5515 /* Sources */,
+				B1A0C4E27F3D48A19C0E5516 /* Frameworks */,
+				B1A0C4E27F3D48A19C0E5517 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			fileSystemSynchronizedGroups = (
+				B1A0C4E27F3D48A19C0E5512 /* BabyMonitorWidgets */,
+			);
+			name = BabyMonitorWidgets;
+			packageProductDependencies = (
+				B1A0C4E27F3D48A19C0E5521 /* KMPLiveActivities */,
+			);
+			productName = BabyMonitorWidgets;
+			productReference = B1A0C4E27F3D48A19C0E5511 /* BabyMonitorWidgets.appex */;
+			productType = "com.apple.product-type.app-extension";
 		};
 /* End PBXNativeTarget section */
 
@@ -103,6 +186,9 @@
 					17E5F54FBD11D3D966614C5E = {
 						CreatedOnToolsVersion = 16.2;
 					};
+					B1A0C4E27F3D48A19C0E5514 = {
+						CreatedOnToolsVersion = 26.4;
+					};
 				};
 			};
 			buildConfigurationList = 283E3CE6EFA9B73895063841 /* Build configuration list for PBXProject "iosApp" */;
@@ -115,11 +201,15 @@
 			mainGroup = CA9C799B6A66D75B29158471;
 			minimizedProjectReferenceProxies = 1;
 			preferredProjectObjectVersion = 77;
+			packageReferences = (
+				B1A0C4E27F3D48A19C0E551F /* XCLocalSwiftPackageReference "../../kmp-live-activities" */,
+			);
 			productRefGroup = CF6D363D52BF974221BF02BC /* Products */;
 			projectDirPath = "";
 			projectRoot = "";
 			targets = (
 				17E5F54FBD11D3D966614C5E /* iosApp */,
+				B1A0C4E27F3D48A19C0E5514 /* BabyMonitorWidgets */,
 			);
 		};
 /* End PBXProject section */
@@ -132,7 +222,22 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		B1A0C4E27F3D48A19C0E5517 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXResourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		B1A0C4E27F3D48A19C0E551D /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = B1A0C4E27F3D48A19C0E5514 /* BabyMonitorWidgets */;
+			targetProxy = B1A0C4E27F3D48A19C0E551E /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
 
 /* Begin PBXShellScriptBuildPhase section */
 		F0C77D7D9EA313051FE7BFFD /* Compile Kotlin Framework */ = {
@@ -164,6 +269,13 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		B1A0C4E27F3D48A19C0E5515 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXSourcesBuildPhase section */
 
 /* Begin XCBuildConfiguration section */
@@ -176,7 +288,7 @@
 				CODE_SIGN_IDENTITY = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
 				DEVELOPMENT_ASSET_PATHS = "\"iosApp/Preview Content\"";
-				DEVELOPMENT_TEAM = 7Y2H8JDSFU;
+				DEVELOPMENT_TEAM = 4BQ488W9M3;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = iosApp/Info.plist;
@@ -346,6 +458,56 @@
 			};
 			name = Debug;
 		};
+		B1A0C4E27F3D48A19C0E5518 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ARCHS = arm64;
+				CODE_SIGN_IDENTITY = "Apple Development";
+				CODE_SIGN_STYLE = Automatic;
+				DEVELOPMENT_TEAM = 4BQ488W9M3;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = BabyMonitorWidgets/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = "BabyMonitor Pro";
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.hazemafaneh.babymonitorpro.BabyMonitorWidgets;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		B1A0C4E27F3D48A19C0E5519 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ARCHS = arm64;
+				CODE_SIGN_IDENTITY = "Apple Development";
+				CODE_SIGN_STYLE = Automatic;
+				DEVELOPMENT_TEAM = "${TEAM_ID}";
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = BabyMonitorWidgets/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = "BabyMonitor Pro";
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.hazemafaneh.babymonitorpro.BabyMonitorWidgets;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
@@ -367,7 +529,34 @@
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
 		};
+		B1A0C4E27F3D48A19C0E551A /* Build configuration list for PBXNativeTarget "BabyMonitorWidgets" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				B1A0C4E27F3D48A19C0E5518 /* Debug */,
+				B1A0C4E27F3D48A19C0E5519 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
 /* End XCConfigurationList section */
+
+/* Begin XCLocalSwiftPackageReference section */
+		B1A0C4E27F3D48A19C0E551F /* XCLocalSwiftPackageReference "../../kmp-live-activities" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = ../../kmp-live-activities;
+		};
+/* End XCLocalSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		B1A0C4E27F3D48A19C0E5520 /* KMPLiveActivities */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = KMPLiveActivities;
+		};
+		B1A0C4E27F3D48A19C0E5521 /* KMPLiveActivities */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = KMPLiveActivities;
+		};
+/* End XCSwiftPackageProductDependency section */
 	};
 	rootObject = 09B04B20617912CF5AFF19FE /* Project object */;
 }
