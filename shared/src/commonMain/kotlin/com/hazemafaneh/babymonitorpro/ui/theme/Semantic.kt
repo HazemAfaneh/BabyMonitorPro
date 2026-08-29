@@ -37,18 +37,24 @@ val LocalBmpSemantic = staticCompositionLocalOf {
     // Never read in practice — BabyMonitorTheme always provides a real one. The fallback is
     // the day scheme's values so a stray preview outside the theme is merely plain, not black.
     BmpSemantic(
-        statusLive = Color(0xFFFFC66B),
-        statusDegraded = Color(0xFF9AA6E8),
-        statusWaiting = Color(0xFFB6BACB),
-        statusFault = Color(0xFFE79187),
-        privacy = Color(0xFF86C9AE),
+        statusLive = Color(0xFFF2A63B),
+        statusDegraded = Color(0xFF3B4CC0),
+        statusWaiting = Color(0xFF8A7A66),
+        statusFault = Color(0xFFD4384F),
+        privacy = Color(0xFF1F8A5F),
     )
 }
 
-/** Reads the semantic layer. Mirrors how `MaterialTheme.colorScheme` is reached. */
+/** Reads the app's own token layers. Mirrors how `MaterialTheme.colorScheme` is reached. */
 object BmpTheme {
     val semantic: BmpSemantic
         @Composable @ReadOnlyComposable get() = LocalBmpSemantic.current
+
+    val tints: BmpTints
+        @Composable @ReadOnlyComposable get() = LocalBmpTints.current
+
+    val motion: BmpMotion
+        @Composable @ReadOnlyComposable get() = LocalBmpMotion.current
 }
 
 /**
@@ -66,10 +72,10 @@ object Space {
     val md = 16.dp
     /** Screen gutter on a phone. */
     val lg = 20.dp
-    /** Role cards, and the widest gutter a phone gets. */
+    /** Card padding, and the role cards. */
     val xl = 24.dp
     /** Screen gutter on a tablet or desktop. */
-    val xxl = 28.dp
+    val xxl = 36.dp
 }
 
 object Touch {

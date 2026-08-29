@@ -1,9 +1,6 @@
 package com.hazemafaneh.babymonitorpro.ui.theme
 
-import androidx.compose.animation.animateColorAsState
-import androidx.compose.animation.core.tween
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.ColorScheme
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Shapes
 import androidx.compose.material3.darkColorScheme
@@ -11,52 +8,8 @@ import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.compositionLocalOf
-import androidx.compose.runtime.getValue
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
-
-// Deep charcoal-indigo surfaces with a single warm amber accent. Nothing on the dark
-// theme is pure white — a dark bedroom at 3am is the design brief.
-//
-// Amber is the right accent for this product for a physical reason: long-wavelength light at
-// low luminance is the least disruptive thing you can put in a dark bedroom, and it is the
-// colour of every night light already in the room. It is spent on one meaning only — see
-// [BmpSemantic].
-private val Amber = Color(0xFFFFC66B)
-private val AmberDeep = Color(0xFF2A1F0A)
-private val Indigo = Color(0xFF9AA6E8)
-private val IndigoDeep = Color(0xFF1B1E33)
-private val Mint = Color(0xFF86C9AE)
-
-private val DarkColors = darkColorScheme(
-    primary = Amber,
-    onPrimary = AmberDeep,
-    primaryContainer = Color(0xFF4A3A18),
-    onPrimaryContainer = Color(0xFFFFE2B0),
-    secondary = Indigo,
-    onSecondary = Color(0xFF141726),
-    secondaryContainer = IndigoDeep,
-    onSecondaryContainer = Color(0xFFC7CEF5),
-    tertiary = Mint,
-    onTertiary = Color(0xFF0A2018),
-    tertiaryContainer = Color(0xFF14372C),
-    onTertiaryContainer = Color(0xFFB8E6D3),
-    background = Color(0xFF0F1017),
-    onBackground = Color(0xFFE2E4EE),
-    surface = Color(0xFF171925),
-    onSurface = Color(0xFFE2E4EE),
-    // Sheets, so they read as sitting above a card rather than beside it.
-    surfaceContainerHigh = Color(0xFF1D2030),
-    surfaceVariant = Color(0xFF232636),
-    onSurfaceVariant = Color(0xFFB6BACB),
-    outline = Color(0xFF3B3F52),
-    outlineVariant = Color(0xFF2A2E3E),
-    error = Color(0xFFE79187),
-    onError = Color(0xFF3A100C),
-    errorContainer = Color(0xFF3A1512),
-    onErrorContainer = Color(0xFFF3C7C1),
-    scrim = Color(0xFF000000),
-)
 
 /**
  * Night. Not the day scheme at 45% opacity.
@@ -106,41 +59,75 @@ private val NightColors = darkColorScheme(
     scrim = Color(0xFF000000),
 )
 
-private val LightColors = lightColorScheme(
-    // Darkened from #8A5A00: 4.9:1 on white, where it used to be 4.3:1 and failed AA for
-    // the small text it gets used on.
-    primary = Color(0xFF7A4E00),
-    onPrimary = Color(0xFFFFFFFF),
-    primaryContainer = Color(0xFFFFE2B0),
-    onPrimaryContainer = Color(0xFF2A1F0A),
-    secondary = Color(0xFF3C4784),
+/**
+ * Day. A warm cream ground, white cards, and colour spent only where it means something.
+ *
+ * The app used to open on charcoal, on the theory that a baby monitor is a night-time
+ * object. It is not: it is set up in daylight, by two tired people passing one phone
+ * between them, and a dark app in a bright nursery is the wrong end of every contrast
+ * ratio. Night is a room the parent walks into later — [NightColors] — not the default.
+ *
+ * Structure here is carried by a 1.5dp `outlineVariant` border and nothing else. There are
+ * no shadows in this app: depth is `background` (cream) to `surface` (white) to a tint.
+ *
+ * Two roles are rationed rather than used:
+ *  - `primary`, marigold, means **live and healthy** and nothing else. Reach it through
+ *    [BmpSemantic.statusLive], never because it happens to look right.
+ *  - `secondary`, blueberry at 7.1:1 on cream, is **every interactive affordance**. If a
+ *    parent can tap it, it is this colour; if it is this colour, it can be tapped.
+ */
+private val DayColors = lightColorScheme(
+    // Reserved: live and healthy only.
+    primary = Color(0xFFF2A63B),
+    onPrimary = Color(0xFF3D2A05),
+    primaryContainer = Color(0xFFFFE7BC),
+    onPrimaryContainer = Color(0xFF4A3208),
+    // Every interactive affordance. 7.1:1 on the cream ground.
+    secondary = Color(0xFF3B4CC0),
     onSecondary = Color(0xFFFFFFFF),
-    secondaryContainer = Color(0xFFDDE1FF),
-    onSecondaryContainer = Color(0xFF141726),
-    tertiary = Color(0xFF1F6B4F),
+    secondaryContainer = Color(0xFFDFE2FA),
+    onSecondaryContainer = Color(0xFF1B2263),
+    // Privacy state only — the "on your WiFi" line, everywhere it appears.
+    tertiary = Color(0xFF1F8A5F),
     onTertiary = Color(0xFFFFFFFF),
-    tertiaryContainer = Color(0xFFB8E6D3),
-    onTertiaryContainer = Color(0xFF05261A),
-    background = Color(0xFFFAF9FC),
-    onBackground = Color(0xFF1A1B22),
+    tertiaryContainer = Color(0xFFD5EEE2),
+    onTertiaryContainer = Color(0xFF0C3B27),
+    background = Color(0xFFFFF8EF),
+    onBackground = Color(0xFF2A2118),
     surface = Color(0xFFFFFFFF),
-    onSurface = Color(0xFF1A1B22),
-    surfaceContainerHigh = Color(0xFFF0F0F6),
-    surfaceVariant = Color(0xFFE7E7EF),
-    onSurfaceVariant = Color(0xFF474A57),
-    outline = Color(0xFF787B8A),
-    outlineVariant = Color(0xFFD5D6E0),
-    error = Color(0xFFA03027),
+    // 12.4:1 on the cream ground.
+    onSurface = Color(0xFF2A2118),
+    surfaceContainerHigh = Color(0xFFF9F4EC),
+    // Rows, disabled plates, the QR plate.
+    surfaceVariant = Color(0xFFF4F1EA),
+    // Labels, metadata, timestamps. Never a value the parent has to read across a room.
+    onSurfaceVariant = Color(0xFF8A7A66),
+    // Field borders and unselected controls.
+    outline = Color(0xFFDFD3C2),
+    // The card border, which is where all of this scheme's structure lives.
+    outlineVariant = Color(0xFFEADFCF),
+    error = Color(0xFFD4384F),
     onError = Color(0xFFFFFFFF),
-    errorContainer = Color(0xFFFFDAD5),
-    onErrorContainer = Color(0xFF410904),
+    // The fill stays quiet and the outline does the shouting — a full red card is a light
+    // source, and an error is not worth lighting a nursery for.
+    errorContainer = Color(0xFFFBE4E7),
+    // 6.8:1 on that fill.
+    onErrorContainer = Color(0xFF8E2436),
+    scrim = Color(0xFF000000),
 )
 
+/**
+ * Radii unchanged in spirit, reassigned in practice.
+ *
+ * `large` carries every content card and the preview frame, which is why it moved up to
+ * 22dp: at 20dp a card the width of a phone screen reads as a rounded rectangle, and at
+ * 22dp it reads as a card. `extraLarge` is the role cards and the live view's floating bar.
+ */
 private val BmpShapes = Shapes(
     extraSmall = RoundedCornerShape(8.dp),
     small = RoundedCornerShape(12.dp),
     medium = RoundedCornerShape(16.dp),
-    large = RoundedCornerShape(20.dp),
+    large = RoundedCornerShape(22.dp),
     extraLarge = RoundedCornerShape(28.dp),
 )
 
@@ -151,34 +138,34 @@ private val BmpShapes = Shapes(
 val LocalReducedMotion = compositionLocalOf { false }
 
 /**
- * True while the night scheme is in force, for the few places that need to know something
- * other than a colour — the camera preview does not dim with the chrome, for instance.
- * Reading this to *pick a colour* is a mistake; the scheme has already handled that.
+ * The app has exactly two schemes: [DayColors] and [NightColors]. There is no third
+ * "system dark" — a baby monitor's ground is a decision the design makes, and the one
+ * thing a parent gets to say about it is whether the room is dark right now.
+ *
+ * The swap between them is a cut, not a fade. This used to cross-fade over 400ms on the
+ * theory that a hard change to near-black is a flash the eye catches. It is the other way
+ * round: the parent has just pressed the moon button *because* the room is dark, and the
+ * fade means the screen they are looking at spends four hundred milliseconds passing
+ * through every mid-grey between the two schemes — which is more emitted light, for longer,
+ * than either end. A colour change nobody is waiting on can afford to be slow; this one is
+ * the answer to a button press.
  */
-val LocalNightDim = compositionLocalOf { false }
-
 @Composable
 fun BabyMonitorTheme(
-    darkTheme: Boolean = true,
+    night: Boolean = false,
     reducedMotion: Boolean = false,
-    /**
-     * Night has settled — the camera device has been untouched long enough, or a bedside
-     * viewer is running overnight. Distinct from the *preference* being on: the preference
-     * arms it, this is it actually being in force.
-     */
-    nightActive: Boolean = false,
     content: @Composable () -> Unit,
 ) {
-    val target = when {
-        nightActive -> NightColors
-        darkTheme -> DarkColors
-        else -> LightColors
-    }
-    val scheme = animatedScheme(target)
+    val scheme = if (night) NightColors else DayColors
 
     CompositionLocalProvider(
         LocalReducedMotion provides reducedMotion,
-        LocalNightDim provides nightActive,
+        LocalBmpTints provides if (night) NightTints else DayTints,
+        LocalBmpMotion provides when {
+            reducedMotion -> ReducedMotion
+            night -> NightMotion
+            else -> DayMotion
+        },
         LocalBmpSemantic provides BmpSemantic(
             statusLive = scheme.primary,
             statusDegraded = scheme.secondary,
@@ -195,63 +182,3 @@ fun BabyMonitorTheme(
     }
 }
 
-/**
- * Cross-fades between schemes rather than cutting.
- *
- * Deliberately exempt from [LocalReducedMotion]: a colour change is not motion, and nothing
- * here moves or blinks. A hard cut to near-black in a dark room is a flash of change the eye
- * catches; a 400ms fade is not. Only the roles the app actually paints with are animated —
- * animating all thirty would cost recompositions for colours nothing reads.
- */
-@Composable
-private fun animatedScheme(target: ColorScheme): ColorScheme {
-    val spec = tween<Color>(durationMillis = SCHEME_FADE_MILLIS)
-
-    val background by animateColorAsState(target.background, spec, label = "background")
-    val onBackground by animateColorAsState(target.onBackground, spec, label = "onBackground")
-    val surface by animateColorAsState(target.surface, spec, label = "surface")
-    val onSurface by animateColorAsState(target.onSurface, spec, label = "onSurface")
-    val surfaceContainerHigh by
-        animateColorAsState(target.surfaceContainerHigh, spec, label = "surfaceContainerHigh")
-    val surfaceVariant by animateColorAsState(target.surfaceVariant, spec, label = "surfaceVariant")
-    val onSurfaceVariant by
-        animateColorAsState(target.onSurfaceVariant, spec, label = "onSurfaceVariant")
-    val outline by animateColorAsState(target.outline, spec, label = "outline")
-    val outlineVariant by animateColorAsState(target.outlineVariant, spec, label = "outlineVariant")
-    val primary by animateColorAsState(target.primary, spec, label = "primary")
-    val primaryContainer by
-        animateColorAsState(target.primaryContainer, spec, label = "primaryContainer")
-    val onPrimaryContainer by
-        animateColorAsState(target.onPrimaryContainer, spec, label = "onPrimaryContainer")
-    val secondary by animateColorAsState(target.secondary, spec, label = "secondary")
-    val secondaryContainer by
-        animateColorAsState(target.secondaryContainer, spec, label = "secondaryContainer")
-    val tertiary by animateColorAsState(target.tertiary, spec, label = "tertiary")
-    val error by animateColorAsState(target.error, spec, label = "error")
-    val errorContainer by animateColorAsState(target.errorContainer, spec, label = "errorContainer")
-    val onErrorContainer by
-        animateColorAsState(target.onErrorContainer, spec, label = "onErrorContainer")
-
-    return target.copy(
-        background = background,
-        onBackground = onBackground,
-        surface = surface,
-        onSurface = onSurface,
-        surfaceContainerHigh = surfaceContainerHigh,
-        surfaceVariant = surfaceVariant,
-        onSurfaceVariant = onSurfaceVariant,
-        outline = outline,
-        outlineVariant = outlineVariant,
-        primary = primary,
-        primaryContainer = primaryContainer,
-        onPrimaryContainer = onPrimaryContainer,
-        secondary = secondary,
-        secondaryContainer = secondaryContainer,
-        tertiary = tertiary,
-        error = error,
-        errorContainer = errorContainer,
-        onErrorContainer = onErrorContainer,
-    )
-}
-
-private const val SCHEME_FADE_MILLIS = 400

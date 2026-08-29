@@ -52,7 +52,7 @@ class QrEncoderTest {
 
     @Test
     fun theSameInputAlwaysProducesTheSameCode() {
-        val content = "bmpro://192.168.1.42:8080?pin=004215"
+        val content = "bmpro://192.168.1.42:8080"
         val first = assertNotNull(QrEncoder.encode(content))
         val second = assertNotNull(QrEncoder.encode(content))
 

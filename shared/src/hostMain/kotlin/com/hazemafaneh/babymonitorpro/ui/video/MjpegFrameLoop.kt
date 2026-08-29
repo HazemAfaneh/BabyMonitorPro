@@ -106,11 +106,11 @@ internal fun MjpegFrameLoop(
 actual val videoRendersBehindUi: Boolean = false
 
 internal class StalledStreamException : Exception(
-    "Connected, but the camera sent no video. Check the camera screen is still open.",
+    "Connected, but the nursery device sent no video. Check the camera screen is still open there.",
 )
 
 internal class UndecodableStreamException(received: Int) : Exception(
-    "Received $received frames from the camera but none could be decoded.",
+    "Received $received frames from the nursery device, but none could be decoded.",
 )
 
 private const val RECONNECT_DELAY_MILLIS = 2000L

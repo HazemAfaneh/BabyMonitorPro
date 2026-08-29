@@ -56,21 +56,23 @@ fun windowHeight(): Dp {
 }
 
 /**
- * Screen gutter, stepping with the width class.
+ * Screen gutter, stepping 20 → 28 → 36dp with the width class.
  *
- * A phone gets the smallest of the three because the gutter is never paid alone: every card
- * adds its own padding inside it, so a 20dp gutter around a 20dp card inset the text 40dp of
- * a 393dp screen — a tenth of the width, twice, spent on nothing. 16dp still keeps content
- * clear of the edge and hands the difference back to the pairing address and the picture,
- * which are what the screen is for.
+ * It steps rather than staying put because the gutter's job changes with the width. On a
+ * phone it only has to keep text clear of a curved edge; on a 12" tablet it is what stops a
+ * line of body text running the full width of the glass, which no one can read.
  */
 @Composable
 @ReadOnlyComposable
 fun WindowClass.gutter(): Dp = when (this) {
-    WindowClass.COMPACT -> Space.md
-    WindowClass.MEDIUM -> Space.xl
+    WindowClass.COMPACT -> Space.lg
+    // Between the two named steps, and only ever a gutter — which is why it is here and not
+    // in [Space], where it would invite someone to pad a card with it.
+    WindowClass.MEDIUM -> MEDIUM_GUTTER
     WindowClass.EXPANDED -> Space.xxl
 }
+
+private val MEDIUM_GUTTER = 28.dp
 
 private val MEDIUM_BREAKPOINT = 600.dp
 private val EXPANDED_BREAKPOINT = 840.dp

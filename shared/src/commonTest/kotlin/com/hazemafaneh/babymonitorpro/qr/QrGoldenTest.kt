@@ -28,6 +28,11 @@ class QrGoldenTest {
     }
 
     private companion object {
+        // Deliberately left as it was when Vision decoded it, `?pin=` and all, even though
+        // the app no longer emits that query. The value of this fixture is that these exact
+        // bytes were verified end to end by a real scanner; retyping the string to match
+        // today's payload would mean pinning a grid nothing outside this file has ever
+        // read. What is under test is the encoder, not the URI.
         const val CONTENT = "bmpro://192.168.1.42:8080?pin=004215"
 
         val GOLDEN = listOf(

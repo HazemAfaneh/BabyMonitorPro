@@ -14,6 +14,8 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -23,11 +25,15 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.em
+import androidx.compose.ui.unit.sp
+import com.hazemafaneh.babymonitorpro.ui.icons.BmpIcons
 import com.hazemafaneh.babymonitorpro.ui.theme.BmpTheme
 import com.hazemafaneh.babymonitorpro.ui.theme.Space
 import com.hazemafaneh.babymonitorpro.ui.theme.Touch
@@ -68,18 +74,22 @@ fun StatusChip(
 ) {
     Surface(
         modifier = modifier,
-        color = MaterialTheme.colorScheme.surface.copy(alpha = CHIP_ALPHA),
-        shape = MaterialTheme.shapes.large,
+        // Cream, opaque, and the same pill the viewer count sits in. A translucent white
+        // chip took its tint from whatever the camera happened to be pointed at, so the one
+        // element that has to be legible in every frame was the one that changed with them.
+        color = MaterialTheme.colorScheme.background,
+        shape = RoundedCornerShape(PILL_RADIUS),
     ) {
         Row(
-            Modifier.padding(horizontal = 12.dp, vertical = 7.dp),
+            Modifier.padding(horizontal = PILL_H_PADDING, vertical = PILL_V_PADDING),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Box(Modifier.size(8.dp).clip(CircleShape).background(tone.color()))
             Spacer(Modifier.size(Space.xs))
             Text(
                 text = label,
-                style = MaterialTheme.typography.labelLarge,
+                style = MaterialTheme.typography.labelLarge.copy(fontSize = PILL_TEXT),
+                fontWeight = FontWeight.Bold,
                 color = MaterialTheme.colorScheme.onSurface,
             )
             if (trailing != null) {
@@ -112,9 +122,9 @@ fun StatusDot(
         modifier
             .size(18.dp)
             .clip(CircleShape)
-            // A ring of surface behind it, so the dot reads against a bright frame as well
+            // A ring of cream behind it, so the dot reads against a bright frame as well
             // as against black.
-            .background(MaterialTheme.colorScheme.surface.copy(alpha = CHIP_ALPHA)),
+            .background(MaterialTheme.colorScheme.background),
         contentAlignment = Alignment.Center,
     ) {
         Box(Modifier.size(8.dp).clip(CircleShape).background(tone.color()))
@@ -138,26 +148,64 @@ fun PrivacyLine(
     address: String?,
     modifier: Modifier = Modifier,
 ) {
-    Text(
-        text = if (address == null) "On your WiFi only · nothing uploaded" else "On your WiFi · $address",
-        style = MaterialTheme.typography.bodySmall,
-        color = BmpTheme.semantic.privacy,
-        modifier = modifier,
-    )
+    val privacy = BmpTheme.semantic.privacy
+    Row(modifier, verticalAlignment = Alignment.CenterVertically) {
+        // Unplated, unlike the other five. This line appears over the picture as often as
+        // it appears on a card, and a filled square there would be one more object between
+        // the parent and the room.
+        Icon(
+            imageVector = BmpIcons.Shield,
+            contentDescription = null,
+            tint = privacy,
+            modifier = Modifier.size(PRIVACY_ICON),
+        )
+        Spacer(Modifier.width(Space.xxs))
+        Text(
+            text = if (address == null) {
+                "On your WiFi only · nothing uploaded"
+            } else {
+                "On your WiFi · $address"
+            },
+            style = MaterialTheme.typography.bodySmall,
+            color = privacy,
+        )
+    }
 }
 
-/** Section heading inside a card. All caps, tracked out, quiet. */
+/**
+ * Section heading inside a card. All caps, tracked out, quiet.
+ *
+ * [icon] is drawn inline at label size rather than on a plate — a plate here would outweigh
+ * the heading it is labelling.
+ */
 @Composable
 fun SectionLabel(
     text: String,
     modifier: Modifier = Modifier,
+    icon: ImageVector? = null,
 ) {
-    Text(
-        text = text.uppercase(),
-        style = MaterialTheme.typography.labelLarge.copy(letterSpacing = TRACKING),
-        color = MaterialTheme.colorScheme.onSurfaceVariant,
-        modifier = modifier,
-    )
+    Row(modifier, verticalAlignment = Alignment.CenterVertically) {
+        if (icon != null) {
+            Icon(
+                imageVector = icon,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.size(LABEL_ICON),
+            )
+            Spacer(Modifier.width(Space.xxs))
+        }
+        Text(
+            // Small, because caps read a size larger than they set, and this label's job is
+            // to name the card without competing with the address inside it.
+            text = text.uppercase(),
+            style = MaterialTheme.typography.labelLarge.copy(
+                fontSize = LABEL_TEXT,
+                letterSpacing = TRACKING,
+            ),
+            fontWeight = FontWeight.Bold,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+    }
 }
 
 /**
@@ -219,18 +267,20 @@ fun Chevron(
     }
 }
 
+/** The same cream pill as [StatusChip], without the dot. */
 @Composable
 fun OverlayPill(text: String, modifier: Modifier = Modifier) {
     Surface(
         modifier = modifier,
-        color = MaterialTheme.colorScheme.surface.copy(alpha = 0.85f),
-        shape = MaterialTheme.shapes.large,
+        color = MaterialTheme.colorScheme.background,
+        shape = RoundedCornerShape(PILL_RADIUS),
     ) {
         Text(
             text = text,
-            style = MaterialTheme.typography.labelLarge,
+            style = MaterialTheme.typography.labelLarge.copy(fontSize = PILL_TEXT),
+            fontWeight = FontWeight.Bold,
             color = MaterialTheme.colorScheme.onSurface,
-            modifier = Modifier.padding(horizontal = 12.dp, vertical = 7.dp),
+            modifier = Modifier.padding(horizontal = PILL_H_PADDING, vertical = PILL_V_PADDING),
         )
     }
 }
@@ -247,7 +297,7 @@ fun NavRow(
         modifier
             .fillMaxWidth()
             .clip(MaterialTheme.shapes.medium)
-            .clickable(onClick = onClick)
+            .pressable(onClick = onClick, wide = true)
             .heightIn(min = Touch.min)
             .padding(vertical = Space.xs),
         horizontalArrangement = Arrangement.SpaceBetween,
@@ -272,6 +322,11 @@ fun NavRow(
     }
 }
 
-/** Chip alpha over a picture: enough to read against a bright frame, not a solid block. */
-private const val CHIP_ALPHA = 0.85f
-private val TRACKING = 0.06.em
+private val PILL_RADIUS = 20.dp
+private val PILL_H_PADDING = 12.dp
+private val PILL_V_PADDING = 7.dp
+private val PILL_TEXT = 12.sp
+private val PRIVACY_ICON = 14.dp
+private val LABEL_ICON = 15.dp
+private val LABEL_TEXT = 11.sp
+private val TRACKING = 0.07.em
