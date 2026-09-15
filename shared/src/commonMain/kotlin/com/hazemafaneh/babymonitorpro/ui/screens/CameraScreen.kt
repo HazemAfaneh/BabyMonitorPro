@@ -145,6 +145,11 @@ fun CameraScreen(
         broadcaster?.start(
             BroadcastConfig(
                 deviceName = deviceName,
+                // Picture size, frame rate and which lens, all from the settings screen —
+                // the capture config used to be the library default, so three settings a
+                // parent could change had no effect on what was actually sent.
+                port = settings.port,
+                capture = settings.captureConfig(),
                 motionSensitivity = settings.motionSensitivity,
                 soundSensitivity = settings.soundSensitivity,
             ),

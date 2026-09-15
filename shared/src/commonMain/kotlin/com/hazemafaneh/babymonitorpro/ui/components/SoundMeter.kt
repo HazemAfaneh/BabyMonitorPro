@@ -21,6 +21,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.hazemafaneh.babymonitorpro.detect.SoundDetector
+import kotlin.math.sqrt
 import com.hazemafaneh.babymonitorpro.ui.theme.BmpTheme
 
 /**
@@ -69,7 +70,7 @@ fun SoundMeter(
         for (index in 0 until BARS) {
             val reading = history[index]
             Bar(
-                fraction = (reading / DISPLAY_CEILING).coerceIn(MIN_BAR, 1f),
+                fraction = barHeight(reading),
                 color = if (reading >= threshold) loud else quiet,
                 modifier = Modifier.weight(1f),
             )
@@ -103,10 +104,22 @@ private fun Bar(fraction: Float, color: Color, modifier: Modifier) {
 private const val BARS = 14
 
 /**
- * The level a full-height bar means. Well below 1.0: a normal room sits around 0.02–0.1 RMS,
- * and a meter scaled to the theoretical maximum would be flat on the floor all night.
+ * How tall a bar stands for a given RMS reading.
+ *
+ * Square-rooted, and against a ceiling a quarter of the old one. Measured on a phone in a
+ * normal room, the level sits between 0.0005 and 0.04 — against the previous linear scale to
+ * 0.4 that is a fraction between 0.001 and 0.1, all of it below [MIN_BAR], so all fourteen
+ * bars sat on the floor and the meter looked broken rather than quiet. The square root is
+ * what loudness does perceptually: it spends the height where the readings actually are.
  */
-private const val DISPLAY_CEILING = 0.4f
+private fun barHeight(level: Float): Float =
+    sqrt((level / DISPLAY_CEILING).coerceIn(0f, 1f)).coerceIn(MIN_BAR, 1f)
+
+/**
+ * The level a full-height bar means. Far below 1.0: a nursery at cot distance never comes
+ * close to full scale, and a meter scaled to the theoretical maximum is flat all night.
+ */
+private const val DISPLAY_CEILING = 0.25f
 
 /**
  * A silent room still shows fourteen bars.

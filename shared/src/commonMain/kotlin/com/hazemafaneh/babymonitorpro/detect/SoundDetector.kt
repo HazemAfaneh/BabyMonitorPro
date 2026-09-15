@@ -1,5 +1,6 @@
 package com.hazemafaneh.babymonitorpro.detect
 
+import kotlin.math.pow
 import kotlin.math.sqrt
 
 /**
@@ -57,13 +58,31 @@ class SoundDetector(
     companion object {
         const val DEFAULT_DEBOUNCE_MILLIS = 3000L
 
-        /** Sensitivity 0 needs a shout; 100 fires on a whimper. */
-        const val MIN_THRESHOLD = 0.01f
-        const val MAX_THRESHOLD = 0.35f
+        /**
+         * Sensitivity 0 needs a shout; 100 fires on a whimper.
+         *
+         * Both ends moved down after measuring what a real room actually produces. A phone
+         * on a table in a quiet room reads 0.0005–0.015 RMS and a voice nearby peaks around
+         * 0.04; the old floor of 0.01 was inside the noise and the old ceiling of 0.35 is
+         * louder than anything a microphone at cot distance ever sees. At the default
+         * sensitivity that put the threshold at 0.18 — roughly a shout into the handset — so
+         * a sound alert never fired at all, which is the whole feature.
+         */
+        const val MIN_THRESHOLD = 0.004f
+        const val MAX_THRESHOLD = 0.25f
 
+        /**
+         * Geometric, not linear.
+         *
+         * Loudness is multiplicative: the step from 0.004 to 0.02 is the same perceptual
+         * distance as 0.05 to 0.25, and a linear sweep spends ninety of its hundred stops
+         * above 0.03 — i.e. above everything a nursery produces. Interpolating in the
+         * exponent puts the useful range in the middle of the slider, where a parent setting
+         * it against the live meter can actually find it.
+         */
         fun thresholdFor(sensitivity: Int): Float {
             val clamped = sensitivity.coerceIn(0, 100) / 100f
-            return MAX_THRESHOLD - (MAX_THRESHOLD - MIN_THRESHOLD) * clamped
+            return MAX_THRESHOLD * (MIN_THRESHOLD / MAX_THRESHOLD).pow(clamped)
         }
     }
 }

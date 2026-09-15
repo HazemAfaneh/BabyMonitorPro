@@ -2,12 +2,14 @@ package com.hazemafaneh.babymonitorpro.ui.components
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.hazemafaneh.babymonitorpro.ui.icons.BmpIcons
@@ -35,10 +37,16 @@ fun MoonButton(
     modifier: Modifier = Modifier,
 ) {
     val scheme = MaterialTheme.colorScheme
+    val interaction = remember { MutableInteractionSource() }
     IconButton(
         onClick = { onNightChanged(!night) },
+        interactionSource = interaction,
         modifier = modifier
             .size(BUTTON_SIZE)
+            // The moon sits in three headers and the viewer's rail, and on a television it is
+            // one D-pad stop along from the tab strip — without a ring it is the one control
+            // the remote can land on invisibly.
+            .focusRing(interaction, RoundedCornerShape(BUTTON_RADIUS))
             // A plate, not a bare glyph. It sits beside a text action, and an unplated icon
             // next to a word reads as decoration on the word rather than as a second
             // control — which is how the moon got missed entirely in the first pass.

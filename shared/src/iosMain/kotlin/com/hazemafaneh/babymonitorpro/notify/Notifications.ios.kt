@@ -10,7 +10,7 @@ import platform.UserNotifications.UNNotificationRequest
 import platform.UserNotifications.UNTimeIntervalNotificationTrigger
 import platform.UserNotifications.UNUserNotificationCenter
 
-actual fun notifyAlert(endpoint: CameraEndpoint, message: String) {
+actual fun notifyAlert(endpoint: CameraEndpoint, alert: CameraAlert) {
     val center = UNUserNotificationCenter.currentNotificationCenter()
     center.requestAuthorizationWithOptions(
         UNAuthorizationOptionAlert or UNAuthorizationOptionSound,
@@ -18,8 +18,12 @@ actual fun notifyAlert(endpoint: CameraEndpoint, message: String) {
         if (!granted) return@requestAuthorizationWithOptions
 
         val content = UNMutableNotificationContent().apply {
-            setTitle(endpoint.name)
-            setBody(message)
+            // Which sensor fired first, the reading second, the camera third — iOS shows the
+            // title in bold and the subtitle beneath it, so this is the same ordering the
+            // Android shade gets.
+            setTitle(alert.headline)
+            setSubtitle(endpoint.name)
+            setBody(alert.detail)
             // Read back by the notification delegate in MainViewController when the parent
             // taps this. audio=1 because the app raised it for a sound it heard — landing
             // muted would make them hunt for the control while the moment passes.
@@ -33,7 +37,9 @@ actual fun notifyAlert(endpoint: CameraEndpoint, message: String) {
             )
         }
         val request = UNNotificationRequest.requestWithIdentifier(
-            identifier = "bmpro-alert",
+            // Per kind, so a sound alert never replaces a motion one — iOS coalesces by
+            // identifier, and the two answer different questions.
+            identifier = "bmpro-alert-${alert.kind.name.lowercase()}",
             content = content,
             // The shortest trigger iOS accepts; the alert is already late by definition.
             trigger = UNTimeIntervalNotificationTrigger.triggerWithTimeInterval(1.0, false),

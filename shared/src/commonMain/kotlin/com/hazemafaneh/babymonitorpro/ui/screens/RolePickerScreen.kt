@@ -13,7 +13,8 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.safeDrawingPadding
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -58,14 +59,18 @@ import com.hazemafaneh.babymonitorpro.ui.theme.Tint
 fun RolePickerScreen(
     lastRole: Role?,
     onPick: (Role) -> Unit,
+    modifier: Modifier = Modifier,
 ) {
     val tints = BmpTheme.tints
 
     Column(
-        modifier = Modifier
+        modifier = modifier
             .fillMaxSize()
             .background(MaterialTheme.colorScheme.background)
-            .safeDrawingPadding()
+            // No safeDrawingPadding: this is now the home screen's first tab, and the tab
+            // strip above it has already taken the inset. Applying it twice pushed the cards
+            // a status bar's height below where they belong.
+            .verticalScroll(rememberScrollState())
             // Its own gutter rather than the window's. This screen is a centred column of
             // two cards with nothing beside them, so it can afford the wider inset that
             // would cost the camera screen part of its picture.
@@ -179,7 +184,9 @@ private fun RoleCard(
         modifier = Modifier
             .fillMaxWidth()
             .clip(MaterialTheme.shapes.extraLarge)
-            .pressable(onClick = onClick),
+            // The ring follows the card's own radius; the default is the smaller card shape
+            // and drew a rounded rectangle cutting across these corners.
+            .pressable(onClick = onClick, focusShape = MaterialTheme.shapes.extraLarge),
         color = tint.fill,
         shape = MaterialTheme.shapes.extraLarge,
         // The border, not a shadow. Depth in this app is ground → surface → tint, and a

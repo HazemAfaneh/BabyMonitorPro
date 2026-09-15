@@ -8,7 +8,9 @@ import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.semantics.Role
 import com.hazemafaneh.babymonitorpro.ui.theme.BmpTheme
@@ -35,9 +37,20 @@ fun Modifier.pressable(
     wide: Boolean = false,
     role: Role? = null,
     onClickLabel: String? = null,
+    /**
+     * The shape the focus ring follows. Defaults to the card shape because most things that
+     * are pressable in this app are cards; pass the surface's own shape anywhere else, or a
+     * ring will be drawn around a rounded card in the wrong radius.
+     */
+    focusShape: Shape? = null,
 ): Modifier {
     val interactionSource = remember { MutableInteractionSource() }
+    val shape = focusShape ?: MaterialTheme.shapes.large
     return this
+        // Before the clickable, so it observes the focus of the target that clickable
+        // installs. A remote has no thumb to tell the parent where it is pointing, and this
+        // is the whole of the answer — see [focusRing].
+        .focusRing(interactionSource, shape, enabled)
         .pressScale(interactionSource, wide)
         .clickable(
             interactionSource = interactionSource,

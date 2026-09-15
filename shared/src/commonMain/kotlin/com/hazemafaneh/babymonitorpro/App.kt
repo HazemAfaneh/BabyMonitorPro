@@ -17,10 +17,10 @@ import com.hazemafaneh.babymonitorpro.di.appModule
 import com.hazemafaneh.babymonitorpro.store.AppSettings
 import com.hazemafaneh.babymonitorpro.ui.Routes
 import com.hazemafaneh.babymonitorpro.ui.screens.CameraScreen
-import com.hazemafaneh.babymonitorpro.ui.screens.CameraSettingsScreen
 import com.hazemafaneh.babymonitorpro.ui.screens.FindCameraScreen
+import com.hazemafaneh.babymonitorpro.ui.screens.HomeScreen
 import com.hazemafaneh.babymonitorpro.ui.screens.LiveViewScreen
-import com.hazemafaneh.babymonitorpro.ui.screens.RolePickerScreen
+import com.hazemafaneh.babymonitorpro.ui.screens.SettingsScreen
 import com.hazemafaneh.babymonitorpro.ui.theme.BabyMonitorTheme
 import org.koin.compose.KoinApplication
 import org.koin.compose.koinInject
@@ -74,14 +74,20 @@ fun App() {
 
             NavHost(navController = navController, startDestination = Routes.ROLE) {
                 composable(Routes.ROLE) {
-                    RolePickerScreen(
+                    HomeScreen(
                         lastRole = settings.lastRole,
+                        night = night,
+                        onNightChanged = setNight,
                         onPick = { role ->
                             settings.lastRole = role
                             navController.navigate(
                                 if (role == Role.CAMERA) Routes.CAMERA else Routes.FIND
                             )
                         },
+                        // Already home: stopping the broadcast from the Settings tab has
+                        // nowhere to navigate to, and popping the only entry would leave an
+                        // empty back stack.
+                        onStop = {},
                     )
                 }
 
@@ -95,7 +101,7 @@ fun App() {
                 }
 
                 composable(Routes.CAMERA_SETTINGS) {
-                    CameraSettingsScreen(
+                    SettingsScreen(
                         night = night,
                         onNightChanged = setNight,
                         onBack = { navController.popBackStack() },

@@ -14,3 +14,6 @@ actual val supportsCameraRole: Boolean = true
 
 /** Desktop alerts use an in-app banner plus a tray notification; see NotificationCenter. */
 actual val supportsNotifications: Boolean = true
+
+/** A desktop window has a pointer, whatever panel it happens to be displayed on. */
+actual val isTelevision: Boolean = false

@@ -67,12 +67,22 @@ import com.hazemafaneh.babymonitorpro.audio.createAudioPlayer
 import com.hazemafaneh.babymonitorpro.client.ViewerClient
 import com.hazemafaneh.babymonitorpro.core.AudioConfig
 import com.hazemafaneh.babymonitorpro.core.CameraEndpoint
+import com.hazemafaneh.babymonitorpro.core.isTelevision
 import com.hazemafaneh.babymonitorpro.core.nowMillis
 import com.hazemafaneh.babymonitorpro.notify.liveSessions
+import com.hazemafaneh.babymonitorpro.notify.AlertKind
+import com.hazemafaneh.babymonitorpro.notify.CameraAlert
 import com.hazemafaneh.babymonitorpro.notify.notifyAlert
+import com.hazemafaneh.babymonitorpro.store.AppSettings
+import com.hazemafaneh.babymonitorpro.store.ListenOnAlert
+import org.koin.compose.koinInject
 import com.hazemafaneh.babymonitorpro.protocol.ControlMessage
 import com.hazemafaneh.babymonitorpro.ui.KeepScreenAwake
 import com.hazemafaneh.babymonitorpro.ui.components.MoonButton
+import com.hazemafaneh.babymonitorpro.ui.components.focusAnchor
+import com.hazemafaneh.babymonitorpro.ui.components.focusRing
+import com.hazemafaneh.babymonitorpro.ui.components.rememberFocusAnchor
+import com.hazemafaneh.babymonitorpro.ui.components.skipDpadFocus
 import com.hazemafaneh.babymonitorpro.ui.components.MonoValue
 import com.hazemafaneh.babymonitorpro.ui.components.PrivacyLine
 import com.hazemafaneh.babymonitorpro.ui.components.SectionLabel
@@ -124,9 +134,17 @@ fun LiveViewScreen(
     var status by remember(endpoint.id) { mutableStateOf(VideoStatus.CONNECTING) }
     var cameraStatus by remember(endpoint.id) { mutableStateOf<ControlMessage.Status?>(null) }
     var latencyMillis by remember(endpoint.id) { mutableStateOf<Long?>(null) }
-    var alert by remember(endpoint.id) { mutableStateOf<Alert?>(null) }
+    val settings = koinInject<AppSettings>()
+    var alert by remember(endpoint.id) { mutableStateOf<CameraAlert?>(null) }
     var failure by remember(endpoint.id) { mutableStateOf<String?>(null) }
-    var audioOn by remember { mutableStateOf(autoAudio) }
+    // The parent's standing preference, unless this view was opened *by* an alert — then the
+    // app heard something and sound is the reason they are here, whatever the setting says.
+    var audioOn by remember { mutableStateOf(autoAudio || settings.startWithSound) }
+    // True only while the sound is on because *an alert* turned it on. It is what lets
+    // "until quiet" undo its own switch-on without ever undoing the parent's: a parent who
+    // pressed Sound themselves is listening deliberately, and nothing here may mute that.
+    var listeningBecauseOfAlert by remember(endpoint.id) { mutableStateOf(false) }
+    var lastLoudAt by remember(endpoint.id) { mutableStateOf(0L) }
     var controlsVisible by remember { mutableStateOf(true) }
     var lastInteraction by remember { mutableStateOf(nowMillis()) }
     var frameAspect by remember(endpoint.id) { mutableStateOf(0f) }
@@ -134,18 +152,21 @@ fun LiveViewScreen(
 
     // In-session only, never written to disk — the no-recording promise covers alert
     // history as much as it covers video.
-    val alertHistory = remember(endpoint.id) { mutableStateListOf<Alert>() }
+    val alertHistory = remember(endpoint.id) { mutableStateListOf<CameraAlert>() }
 
     // The rail's meter. Kept out of the camera's sensitivity entirely — this measures what
     // arrived down the wire, not what the nursery decided was loud enough to report.
     var heardLevel by remember(endpoint.id) { mutableStateOf(0f) }
     val heardMeter = remember(endpoint.id) { SoundDetector() }
 
+    // The control the remote starts on, and the one it is put back on if focus is ever lost.
+    val soundAnchor = rememberFocusAnchor()
+
     val reducedMotion = LocalReducedMotion.current
     val window = rememberWindowClass()
     val audioPlayer = remember(endpoint.id) { createAudioPlayer(AudioConfig()) }
 
-    KeepScreenAwake(enabled = true)
+    KeepScreenAwake(enabled = settings.keepScreenAwake)
 
     // The watching session on the Lock Screen and in the Dynamic Island, for exactly as long
     // as this screen is up. Keyed on the endpoint so switching cameras ends one session and
@@ -162,14 +183,20 @@ fun LiveViewScreen(
     LaunchedEffect(status, alert) {
         liveSessions.updateViewing(
             statusLabel = status.describe().first,
-            alert = alert?.label,
+            alert = alert?.oneLine,
         )
     }
 
     LaunchedEffect(lastInteraction, window) {
         controlsVisible = true
-        // Desktop keeps its chrome: there is nothing to reveal by hiding it.
-        if (window == WindowClass.EXPANDED || videoRendersBehindUi) return@LaunchedEffect
+        // Desktop keeps its chrome: there is nothing to reveal by hiding it. So does a
+        // television, and for a harder reason — auto-hiding chrome is a touch idea. It
+        // assumes a tap can bring it back, and a remote has no tap: once the bar had faded
+        // there was nothing focusable left on screen, so the D-pad had nowhere to go and the
+        // picture became a dead end with no visible way back into the app.
+        if (isTelevision || window == WindowClass.EXPANDED || videoRendersBehindUi) {
+            return@LaunchedEffect
+        }
         delay(CONTROLS_TIMEOUT_MILLIS)
         controlsVisible = false
     }
@@ -197,27 +224,46 @@ fun LiveViewScreen(
                             is ControlMessage.Pong ->
                                 latencyMillis = nowMillis() - message.nonce
                             is ControlMessage.MotionEvent -> {
-                                // "In the nursery", not "detected". It says *where*, which
-                                // costs two words now and matters the moment a second
-                                // camera exists.
-                                val raised = Alert(
-                                    label = "Movement in the nursery",
-                                    meta = "just now · sound was quiet",
+                                val raised = CameraAlert(
+                                    kind = AlertKind.MOTION,
                                     atMillis = message.atMillis,
+                                    magnitude = message.intensity,
                                 )
                                 alert = raised
                                 alertHistory.record(raised)
-                                raiseAlert(endpoint.named(cameraStatus), raised.label)
+                                raiseAlert(
+                                    endpoint.named(cameraStatus),
+                                    raised,
+                                    settings.motionAlerts,
+                                )
+                                if (settings.listenOnAlert != ListenOnAlert.OFF && !audioOn) {
+                                    audioOn = true
+                                    listeningBecauseOfAlert = true
+                                }
+                                lastLoudAt = nowMillis()
                             }
                             is ControlMessage.SoundEvent -> {
-                                val raised = Alert(
-                                    label = "Sound in the nursery",
-                                    meta = "just now · the picture was still",
+                                val raised = CameraAlert(
+                                    kind = AlertKind.SOUND,
                                     atMillis = message.atMillis,
+                                    magnitude = message.level,
                                 )
                                 alert = raised
                                 alertHistory.record(raised)
-                                raiseAlert(endpoint.named(cameraStatus), raised.label)
+                                raiseAlert(
+                                    endpoint.named(cameraStatus),
+                                    raised,
+                                    settings.soundAlerts,
+                                )
+                                // The whole point of the setting: the app has just said it
+                                // heard something, and hearing it is the next thing the
+                                // parent wants — before they have crossed the room to the
+                                // remote, by which time it has usually stopped.
+                                if (settings.listenOnAlert != ListenOnAlert.OFF && !audioOn) {
+                                    audioOn = true
+                                    listeningBecauseOfAlert = true
+                                }
+                                lastLoudAt = nowMillis()
                             }
                             else -> Unit
                         }
@@ -232,13 +278,20 @@ fun LiveViewScreen(
     }
 
     // Keyed on the alert itself, so a second event replaces the first *and* restarts the
-    // dwell. Unacknowledged it clears after thirty seconds — long enough to be read after a
-    // parent looks up, short enough that a stale alert cannot be mistaken for a live one.
-    // The event stays in the history either way.
+    // dwell. It clears itself after five seconds whether or not anybody presses "Got it" —
+    // the banner covers the top of the picture, and on a television nobody is going to walk
+    // over and dismiss it, so a banner that waits to be acknowledged is a banner sitting
+    // over the cot all night. Five seconds is long enough to read two short lines.
+    // The event stays in the history either way, and in the notification shade.
     LaunchedEffect(alert) {
         if (alert != null) {
             delay(ALERT_VISIBLE_MILLIS)
             alert = null
+            // Belt and braces with [skipDpadFocus] on the banner's action: whatever else may
+            // have been focusable inside a banner that has just left the composition, the
+            // remote ends up back on the Sound control rather than nowhere. Cheap, and the
+            // failure it prevents is a television whose remote stops working entirely.
+            if (isTelevision) runCatching { soundAnchor.requestFocus() }
         }
     }
 
@@ -264,6 +317,11 @@ fun LiveViewScreen(
                         // already been decoded and copied.
                         heardMeter.submit(chunk, nowMillis())
                         heardLevel = heardMeter.lastLevel
+                        // The clock "until quiet" runs against. Anything above the floor
+                        // counts as the room still being awake — this is deliberately a
+                        // lower bar than the camera's alert threshold, so a baby who has
+                        // settled to grizzling does not get the speaker cut mid-grizzle.
+                        if (heardMeter.lastLevel >= QUIET_LEVEL) lastLoudAt = nowMillis()
                     }
                 }
                 delay(RECONNECT_DELAY_MILLIS)
@@ -272,6 +330,22 @@ fun LiveViewScreen(
             player.stop()
             client.close()
             heardLevel = 0f
+        }
+    }
+
+    // "Until quiet": the sound an alert switched on turns itself off again once the nursery
+    // has been still for a while. Only ever the sound *this* turned on — [listeningBecauseOfAlert]
+    // is cleared the moment the parent touches the control, so a deliberate listen is never
+    // cut short.
+    LaunchedEffect(listeningBecauseOfAlert, audioOn) {
+        if (!listeningBecauseOfAlert || !audioOn) return@LaunchedEffect
+        if (settings.listenOnAlert != ListenOnAlert.UNTIL_QUIET) return@LaunchedEffect
+        while (true) {
+            delay(QUIET_CHECK_MILLIS)
+            if (nowMillis() - lastLoudAt < QUIET_FOR_MILLIS) continue
+            audioOn = false
+            listeningBecauseOfAlert = false
+            return@LaunchedEffect
         }
     }
 
@@ -288,9 +362,14 @@ fun LiveViewScreen(
     // Above 840dp the chrome becomes a rail beside the picture. Not on web: there the video
     // is a real DOM element behind the canvas, so a rail drawn next to it would be drawn
     // next to nothing.
-    val railPresent = window == WindowClass.EXPANDED && !videoIsSeparateLayer
-    val chromeAlwaysVisible = videoIsSeparateLayer || window == WindowClass.EXPANDED ||
-        controlsVisible
+    // Keyed on the device, not only on the width. A television is where the rail matters
+    // most — it is the only surface with no touch at all, so every control has to be a
+    // standing target the remote can reach — and TV boxes do not reliably report an EXPANDED
+    // window: plenty hand back 1920x1080 at a density that measures 640dp, which put a 55"
+    // screen on the phone layout with auto-hiding chrome and no rail at all.
+    val railPresent = (isTelevision || window == WindowClass.EXPANDED) && !videoIsSeparateLayer
+    val chromeAlwaysVisible = videoIsSeparateLayer || isTelevision ||
+        window == WindowClass.EXPANDED || controlsVisible
 
     // A landscape camera watched on an upright phone aspect-fits into roughly a third of the
     // screen, with the rest black. Nothing is wrong and nothing is cropped — the picture is
@@ -299,6 +378,8 @@ fun LiveViewScreen(
     // phone is all it takes.
     val portraitWindow = windowHeight() > windowWidth()
     val suggestRotation = !rotationHintSeen &&
+        // Nobody turns a television sideways.
+        !isTelevision &&
         window.isCompact &&
         portraitWindow &&
         !videoIsSeparateLayer &&
@@ -349,6 +430,9 @@ fun LiveViewScreen(
             onTouch = { lastInteraction = nowMillis() },
             onToggleAudio = {
                 audioOn = !audioOn
+                // The parent has taken the decision back. Whatever an alert did, this is now
+                // their setting until they change it again.
+                listeningBecauseOfAlert = false
                 lastInteraction = nowMillis()
             },
             onBack = onBack,
@@ -358,6 +442,7 @@ fun LiveViewScreen(
         // it, so nothing ever overlaps the frame.
         if (railPresent) {
             SideRail(
+                soundAnchor = soundAnchor,
                 name = cameraStatus?.deviceName ?: endpoint.name,
                 // Host only. The rail is 352dp and the port is the half nobody reads aloud;
                 // the phone's bar still prints the whole thing.
@@ -374,6 +459,7 @@ fun LiveViewScreen(
                 onNightChanged = onNightChanged,
                 onToggleAudio = {
                     audioOn = !audioOn
+                    listeningBecauseOfAlert = false
                     lastInteraction = nowMillis()
                 },
                 onBack = onBack,
@@ -398,7 +484,7 @@ private fun LivePane(
     latencyMillis: Long?,
     cameraStatus: ControlMessage.Status?,
     failure: String?,
-    alert: Alert?,
+    alert: CameraAlert?,
     audioOn: Boolean,
     audioAvailable: Boolean,
     audioSupported: Boolean,
@@ -419,10 +505,21 @@ private fun LivePane(
     onBack: () -> Unit,
 ) {
     Box(
-        modifier.clickable(
-            interactionSource = remember { MutableInteractionSource() },
-            indication = null,
-        ) { onTouch() },
+        // The whole picture is a tap target on touch devices — that tap is what brings the
+        // auto-hidden chrome back. On a television it is worse than useless: the chrome never
+        // hides there, so it reveals nothing, and being clickable makes it focusable, so it
+        // becomes a screen-sized focus target that swallows the D-pad before the rail beside
+        // it ever gets a turn.
+        modifier.then(
+            if (isTelevision) {
+                Modifier
+            } else {
+                Modifier.clickable(
+                    interactionSource = remember { MutableInteractionSource() },
+                    indication = null,
+                ) { onTouch() }
+            },
+        ),
     ) {
         MjpegVideo(
             endpoint = endpoint,
@@ -639,7 +736,7 @@ private fun TopChrome(
  */
 @Composable
 private fun AlertBanner(
-    alert: Alert?,
+    alert: CameraAlert?,
     onDismiss: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -666,14 +763,16 @@ private fun AlertBanner(
             Spacer(Modifier.size(Space.sm))
             Column(Modifier.weight(1f)) {
                 Text(
-                    text = alert.label,
+                    text = alert.headline,
                     style = MaterialTheme.typography.titleMedium.copy(fontSize = BANNER_TITLE),
                     fontWeight = FontWeight.Bold,
                     color = MaterialTheme.colorScheme.onSurface,
                     maxLines = 1,
                 )
                 Text(
-                    text = alert.meta,
+                    // What was actually measured, not what the other sensor might have been
+                    // doing. See [CameraAlert].
+                    text = alert.detail,
                     style = MaterialTheme.typography.bodySmall.copy(fontSize = BANNER_META),
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     maxLines = 1,
@@ -681,8 +780,18 @@ private fun AlertBanner(
             }
             // Blueberry, like every other affordance. Berry here would make the way out of
             // the alert look like part of the alarm.
+            val dismissInteraction = remember { MutableInteractionSource() }
             TextButton(
                 onClick = onDismiss,
+                interactionSource = dismissInteraction,
+                // The alert banner is drawn over the picture on every layout, television
+                // included, so its one action needs a ring like everything else.
+                modifier = Modifier
+                    // The banner clears itself after five seconds. On a television that made
+                    // it a focus trap with a five-second fuse: focus the button, wait, and
+                    // the node it was on no longer exists.
+                    .skipDpadFocus()
+                    .focusRing(dismissInteraction, MaterialTheme.shapes.medium),
                 colors = ButtonDefaults.textButtonColors(
                     contentColor = MaterialTheme.colorScheme.secondary,
                 ),
@@ -756,8 +865,11 @@ private fun BottomBar(
                     onClick = onToggleAudio,
                 )
             }
+            val closeInteraction = remember { MutableInteractionSource() }
             TextButton(
                 onClick = onBack,
+                interactionSource = closeInteraction,
+                modifier = Modifier.focusRing(closeInteraction, MaterialTheme.shapes.medium),
                 colors = ButtonDefaults.textButtonColors(
                     contentColor = MaterialTheme.colorScheme.secondary,
                 ),
@@ -849,9 +961,10 @@ private fun SoundPill(
  */
 @Composable
 private fun SideRail(
+    soundAnchor: androidx.compose.ui.focus.FocusRequester,
     name: String,
     address: String,
-    history: List<Alert>,
+    history: List<CameraAlert>,
     level: Float,
     audioOn: Boolean,
     audioAvailable: Boolean,
@@ -948,26 +1061,57 @@ private fun SideRail(
                     color = lemon.contentMuted,
                 )
             } else {
-                Column(verticalArrangement = Arrangement.spacedBy(Space.xs)) {
-                    for (entry in history.take(RAIL_STRIP_MAX)) {
+                // A fixed height that scrolls, rather than a list that grows.
+                //
+                // The rail is a column: every event added here pushed the Sound and Close
+                // buttons further down, and after a busy hour they were off the bottom of a
+                // television screen entirely — the controls disappearing because the baby
+                // moved is exactly backwards. The card now takes the same room whether it
+                // holds one event or twenty, and the overflow scrolls inside it.
+                Column(
+                    modifier = Modifier
+                        .height(RAIL_STRIP_HEIGHT)
+                        .verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(Space.xs),
+                ) {
+                    // The whole history, not the first six: the card no longer grows with it,
+                    // so capping the list only hid events a parent could otherwise scroll to.
+                    // Newest first, so the cap costs nothing at a glance.
+                    for (entry in history) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Icon(
-                                imageVector = BmpIcons.Rattle,
+                                // The rattle for sound, the teddy for movement. Every row
+                                // used to carry the rattle, which made a list of six events
+                                // look like six of the same thing — and the one question a
+                                // parent asks this list is which kind woke them.
+                                imageVector = when (entry.kind) {
+                                    AlertKind.SOUND -> BmpIcons.Rattle
+                                    AlertKind.MOTION -> BmpIcons.Teddy
+                                },
                                 contentDescription = null,
                                 tint = lemon.glyph,
                                 modifier = Modifier.size(RAIL_STRIP_ICON),
                             )
                             Spacer(Modifier.size(Space.xs))
-                            Text(
-                                text = entry.label,
-                                style = MaterialTheme.typography.bodySmall.copy(
-                                    fontSize = RAIL_STRIP_TEXT,
-                                ),
-                                fontWeight = FontWeight.SemiBold,
-                                color = lemon.content,
-                                maxLines = 1,
-                                modifier = Modifier.weight(1f),
-                            )
+                            Column(Modifier.weight(1f)) {
+                                Text(
+                                    text = entry.headline,
+                                    style = MaterialTheme.typography.bodySmall.copy(
+                                        fontSize = RAIL_STRIP_TEXT,
+                                    ),
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = lemon.content,
+                                    maxLines = 1,
+                                )
+                                Text(
+                                    text = entry.detail,
+                                    style = MaterialTheme.typography.bodySmall.copy(
+                                        fontSize = RAIL_STRIP_DETAIL,
+                                    ),
+                                    color = lemon.contentMuted,
+                                    maxLines = 1,
+                                )
+                            }
                             Text(
                                 text = clockTime(entry.atMillis),
                                 style = MaterialTheme.typography.labelMedium.copy(
@@ -1002,7 +1146,10 @@ private fun SideRail(
                     on = audioOn,
                     available = audioAvailable,
                     onClick = onToggleAudio,
-                    modifier = Modifier.weight(1f),
+                    // Where the remote lands when the live view opens. Sound is the control a
+                    // parent reaches for on this screen, and Close sits beside it, so the way
+                    // out is one press away.
+                    modifier = Modifier.weight(1f).focusAnchor(soundAnchor),
                 )
             }
             RailCloseButton(onClick = onBack)
@@ -1142,15 +1289,6 @@ private fun CameraEndpoint.named(status: ControlMessage.Status?): CameraEndpoint
 }
 
 /**
- * One event, and the other sensor's reading beside it.
- *
- * [meta] carries what the *other* detector saw at the same moment, because "movement" alone
- * cannot tell a parent whether to get up. Movement with a quiet room is a baby turning over;
- * movement with sound is a baby awake.
- */
-private data class Alert(val label: String, val meta: String, val atMillis: Long)
-
-/**
  * Puts a motion or sound alert in front of the parent, on every surface at once.
  *
  * Both, deliberately, and not one or the other. Updating the live session changes what the
@@ -1160,12 +1298,16 @@ private data class Alert(val label: String, val meta: String, val atMillis: Long
  * a parent who is asleep. The session then carries the same alert onward, staying current
  * after the banner has been dismissed.
  */
-private fun raiseAlert(endpoint: CameraEndpoint, message: String) {
-    notifyAlert(endpoint, message)
+private fun raiseAlert(endpoint: CameraEndpoint, alert: CameraAlert, notify: Boolean) {
+    // The in-app banner and the history are unconditional — they are the screen doing its
+    // job. Only the system notification is a preference, because it is the only part that
+    // interrupts a parent who did not ask to be interrupted.
+    if (!notify) return
+    notifyAlert(endpoint, alert)
 }
 
 /** Newest first, capped — this is a glance-at list, not a log. */
-private fun MutableList<Alert>.record(alert: Alert) {
+private fun MutableList<CameraAlert>.record(alert: CameraAlert) {
     add(0, alert)
     while (size > ALERT_HISTORY_MAX) removeAt(lastIndex)
 }
@@ -1216,10 +1358,16 @@ private val RAIL_CARD_V = 16.dp
 private val RAIL_LABEL = 10.5.sp
 private val RAIL_TRACKING = 0.07.em
 private val RAIL_METER = 38.dp
+/**
+ * Four rows' worth. Enough to see that a quiet night was quiet and a bad one was not, without
+ * the card taking a third of the rail.
+ */
+private val RAIL_STRIP_HEIGHT = 168.dp
+
+private val RAIL_STRIP_DETAIL = 11.sp
 private val RAIL_STRIP_TEXT = 12.5.sp
 private val RAIL_STRIP_TIME = 11.sp
 private val RAIL_STRIP_ICON = 15.dp
-private const val RAIL_STRIP_MAX = 6
 private val RAIL_BUTTON_RADIUS = 18.dp
 private val RAIL_BUTTON_HEIGHT = 56.dp
 private val RAIL_BUTTON_TEXT = 14.sp
@@ -1262,5 +1410,16 @@ private const val ALERT_HISTORY_MAX = 20
 private const val STALE_FRAME_ALPHA = 0.3f
 private const val CONTROLS_TIMEOUT_MILLIS = 4000L
 private const val PING_INTERVAL_MILLIS = 5000L
+/**
+ * How quiet counts as quiet, and for how long.
+ *
+ * Thirty seconds rather than a few: a baby who has gone back to sleep does it in fits, and a
+ * speaker that cuts out after five seconds of silence and comes back on the next snuffle is
+ * worse than one that simply stays on.
+ */
+private const val QUIET_LEVEL = 0.02f
+private const val QUIET_FOR_MILLIS = 30_000L
+private const val QUIET_CHECK_MILLIS = 2_000L
+
 private const val RECONNECT_DELAY_MILLIS = 1500L
-private const val ALERT_VISIBLE_MILLIS = 30_000L
+private const val ALERT_VISIBLE_MILLIS = 5_000L

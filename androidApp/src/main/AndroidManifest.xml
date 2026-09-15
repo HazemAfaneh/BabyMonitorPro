@@ -23,10 +23,16 @@
 
     <uses-feature android:name="android.hardware.camera.any" android:required="false" />
     <uses-feature android:name="android.hardware.microphone" android:required="false" />
+    <!-- A television has no touchscreen and no leanback-only requirement: this same APK is
+         the phone build, the tablet build and the TV build. Both have to be declared
+         not-required or the Play-style installers refuse the install on a TV outright. -->
+    <uses-feature android:name="android.hardware.touchscreen" android:required="false" />
+    <uses-feature android:name="android.software.leanback" android:required="false" />
 
     <application
         android:name=".BabyMonitorApp"
         android:allowBackup="true"
+        android:banner="@drawable/tv_banner"
         android:icon="@mipmap/ic_launcher"
         android:label="@string/app_name"
         android:roundIcon="@mipmap/ic_launcher_round"
@@ -41,6 +47,15 @@
                 <action android:name="android.intent.action.MAIN" />
 
                 <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+
+            <!-- The TV home row. Without this the app installs on Android TV and then
+                 cannot be started from the launcher at all — there is no icon, and the only
+                 way in is a file manager or adb. -->
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+
+                <category android:name="android.intent.category.LEANBACK_LAUNCHER" />
             </intent-filter>
 
             <!-- bmpro://<ip>:<port> from a scanned QR code. -->

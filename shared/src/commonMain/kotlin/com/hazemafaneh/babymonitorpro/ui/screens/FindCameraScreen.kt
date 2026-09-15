@@ -39,6 +39,7 @@ import androidx.compose.ui.unit.dp
 import com.hazemafaneh.babymonitorpro.ui.components.PairingCelebration
 import com.hazemafaneh.babymonitorpro.ui.components.pressScale
 import androidx.compose.foundation.interaction.MutableInteractionSource
+import com.hazemafaneh.babymonitorpro.ui.components.initialFocus
 import com.hazemafaneh.babymonitorpro.ui.components.pressable
 import com.hazemafaneh.babymonitorpro.ui.theme.Tint
 import com.hazemafaneh.babymonitorpro.ui.components.CARD_BORDER
@@ -99,7 +100,12 @@ fun FindCameraScreen(
     // something to name. Null every other moment.
     var paired by remember { mutableStateOf<CameraEndpoint?>(null) }
 
-    val browser = remember { createBrowser() }
+    // Bumped by the Refresh button. Everything keyed on it — the browser itself and the
+    // effect that runs it — is torn down and rebuilt, which is what "search again" has to
+    // mean: mDNS answers are cached, and a browser that has already decided the network is
+    // empty will happily go on saying so.
+    var discoveryRound by remember { mutableStateOf(0) }
+    val browser = remember(discoveryRound) { createBrowser() }
     val announced by remember(browser) {
         browser?.cameras ?: MutableStateFlow(emptyList<CameraEndpoint>())
     }.collectAsState()
@@ -220,6 +226,11 @@ fun FindCameraScreen(
                     discovered.isEmpty() -> "mDNS · local only"
                     discovered.size == 1 -> "1 found"
                     else -> "${discovered.size} found"
+                },
+                // Nothing to search again with in a browser, so the control is simply absent
+                // there rather than present and dead.
+                onRefresh = if (discoveryImpossible) null else {
+                    { discoveryRound++ }
                 },
             ) {
                 when {
@@ -343,7 +354,11 @@ fun FindCameraScreen(
 
 /** The route that costs nothing, and how it is going. */
 @Composable
-private fun DiscoveryCard(meta: String, content: @Composable () -> Unit) {
+private fun DiscoveryCard(
+    meta: String,
+    onRefresh: (() -> Unit)?,
+    content: @Composable () -> Unit,
+) {
     Surface(
         modifier = Modifier.fillMaxWidth(),
         color = MaterialTheme.colorScheme.surface,
@@ -357,20 +372,68 @@ private fun DiscoveryCard(meta: String, content: @Composable () -> Unit) {
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 SectionLabel("On this network")
-                // How the search works, stated rather than implied. A parent who wonders
-                // whether this app is scanning the internet gets the answer in the corner
-                // of the card doing the scanning.
-                Text(
-                    text = meta,
-                    style = MaterialTheme.typography.labelMedium.copy(
-                        fontFamily = FontFamily.Monospace,
-                        fontSize = META_TEXT,
-                    ),
-                    color = MaterialTheme.colorScheme.outline,
-                )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    // How the search works, stated rather than implied. A parent who wonders
+                    // whether this app is scanning the internet gets the answer in the corner
+                    // of the card doing the scanning.
+                    Text(
+                        text = meta,
+                        style = MaterialTheme.typography.labelMedium.copy(
+                            fontFamily = FontFamily.Monospace,
+                            fontSize = META_TEXT,
+                        ),
+                        color = MaterialTheme.colorScheme.outline,
+                    )
+                    if (onRefresh != null) {
+                        Spacer(Modifier.width(Space.xs))
+                        RefreshButton(onRefresh)
+                    }
+                }
             }
             Spacer(Modifier.height(Space.sm))
             content()
+        }
+    }
+}
+
+/**
+ * Search the network again.
+ *
+ * A labelled pill rather than a bare circular-arrow icon, and that is a television decision
+ * as much as an accessibility one: a 24dp glyph in a card corner is both unreadable from a
+ * sofa and a target the D-pad has to find. This one carries the word, stands 48dp tall, and
+ * takes the same focus ring every other control on the screen has — so the remote can see it
+ * coming and land on it.
+ *
+ * It is also the control a television needs most. A TV is usually switched on long after the
+ * nursery phone was set up, so its first discovery sweep can easily be the one that missed —
+ * and there is no pull-to-refresh on a device with no touchscreen.
+ */
+@Composable
+private fun RefreshButton(onClick: () -> Unit) {
+    Surface(
+        modifier = Modifier
+            .heightIn(min = Touch.min)
+            // Where the remote starts on this screen. It is at the top of the card that
+            // matters, and one press down from it is the list of cameras — so the first
+            // thing the D-pad does is either open a camera or search again, which are the
+            // only two things this screen is for.
+            .initialFocus()
+            .pressable(onClick = onClick, focusShape = MaterialTheme.shapes.extraLarge),
+        shape = MaterialTheme.shapes.extraLarge,
+        color = MaterialTheme.colorScheme.surface,
+        border = BorderStroke(CARD_BORDER, MaterialTheme.colorScheme.outlineVariant),
+    ) {
+        Row(
+            Modifier.padding(horizontal = Space.sm),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                text = "Search again",
+                style = MaterialTheme.typography.labelLarge.copy(fontSize = ACTION_TEXT),
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.secondary,
+            )
         }
     }
 }

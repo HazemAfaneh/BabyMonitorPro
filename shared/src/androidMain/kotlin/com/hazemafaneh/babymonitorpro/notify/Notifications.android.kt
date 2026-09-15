@@ -11,8 +11,9 @@ import com.hazemafaneh.babymonitorpro.core.AndroidPlatformContext
 import com.hazemafaneh.babymonitorpro.core.Bmp
 import com.hazemafaneh.babymonitorpro.core.CameraEndpoint
 import com.hazemafaneh.babymonitorpro.core.PairingUri
+import com.hazemafaneh.babymonitorpro.core.isTelevision
 
-actual fun notifyAlert(endpoint: CameraEndpoint, message: String) {
+actual fun notifyAlert(endpoint: CameraEndpoint, alert: CameraAlert) {
     val context = AndroidPlatformContext.applicationContext ?: return
     val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager
         ?: return
@@ -22,15 +23,47 @@ actual fun notifyAlert(endpoint: CameraEndpoint, message: String) {
     )
 
     val notification = Notification.Builder(context, CHANNEL_ID)
-        .setContentTitle(endpoint.name)
-        .setContentText(message)
+        // Which sensor fired, on the line the eye lands on. Both kinds used to arrive titled
+        // with the camera's name and bodied with a sentence that differed in one word, so a
+        // glance at the shade could not tell a baby crying from a blanket being kicked off.
+        .setContentTitle(alert.headline)
+        // The reading that raised it, in words. This is the half that decides whether a
+        // parent gets up, and it is measured rather than guessed.
+        .setContentText(alert.detail)
+        // Which camera, which is the question the moment a second one exists. It goes third
+        // because with one camera it is the least interesting line on the notification.
+        .setSubText(endpoint.name)
         .setSmallIcon(android.R.drawable.stat_notify_more)
+        .setCategory(Notification.CATEGORY_ALARM)
+        // Distinct per kind, so a sound alert never replaces a motion one in the shade. They
+        // are answers to different questions and a parent may want both.
+        .setGroup(GROUP_KEY)
         .setAutoCancel(true)
-        .apply { openLiveView(context, endpoint)?.let(::setContentIntent) }
+        .setWhen(alert.atMillis)
+        .setShowWhen(true)
+        .apply {
+            // Nobody dismisses a notification on a television. There is no swipe, the remote
+            // has no gesture for it, and an alert left standing over the picture is still
+            // there an hour later saying the baby moved — which is precisely the lie this
+            // app cannot afford. On a phone it stays until it is tapped or swiped, because
+            // there it is the thing that wakes a parent who is asleep.
+            if (isTelevision) setTimeoutAfter(TV_DISMISS_MILLIS)
+            openLiveView(context, endpoint)?.let(::setContentIntent)
+        }
         .build()
 
     // Silently ignored when POST_NOTIFICATIONS was declined — the in-app banner still shows.
-    runCatching { manager.notify(NOTIFICATION_ID, notification) }
+    runCatching { manager.notify(notificationId(alert.kind), notification) }
+}
+
+/**
+ * One id per kind, so motion and sound coexist rather than overwrite each other — and so a
+ * second event of the same kind still replaces the first, which is the behaviour a stack of
+ * near-identical alerts should have.
+ */
+private fun notificationId(kind: AlertKind): Int = when (kind) {
+    AlertKind.MOTION -> NOTIFICATION_ID_MOTION
+    AlertKind.SOUND -> NOTIFICATION_ID_SOUND
 }
 
 /**
@@ -63,5 +96,14 @@ private fun openLiveView(
 }.getOrNull()
 
 private const val CHANNEL_ID = "alerts"
-private const val NOTIFICATION_ID = 43
+private const val GROUP_KEY = "bmpro.alerts"
+private const val NOTIFICATION_ID_MOTION = 43
+private const val NOTIFICATION_ID_SOUND = 44
 private const val REQUEST_CODE = 43
+
+/**
+ * Long enough to be noticed by someone looking away from the screen, short enough that it is
+ * gone before it stops being true. The detectors debounce at 3 seconds, so this also stops a
+ * busy room leaving a permanent banner across the top of the picture.
+ */
+private const val TV_DISMISS_MILLIS = 12_000L

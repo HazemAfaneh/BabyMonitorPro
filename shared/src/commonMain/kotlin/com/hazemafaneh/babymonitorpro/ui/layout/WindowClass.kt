@@ -6,6 +6,7 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import com.hazemafaneh.babymonitorpro.core.isTelevision
 import com.hazemafaneh.babymonitorpro.ui.theme.Space
 
 /**
@@ -64,15 +65,33 @@ fun windowHeight(): Dp {
  */
 @Composable
 @ReadOnlyComposable
-fun WindowClass.gutter(): Dp = when (this) {
-    WindowClass.COMPACT -> Space.lg
+fun WindowClass.gutter(): Dp = when {
+    // A television overscans: the panel crops a few percent off every edge, and what is
+    // cropped is whatever the app drew there. The 5% inset is the standard allowance, and it
+    // is a gutter rather than a window-wide padding so a full-bleed picture still fills the
+    // glass — losing a sliver of the nursery is fine; losing the Settings tab is not.
+    isTelevision -> TV_OVERSCAN
+    this == WindowClass.COMPACT -> Space.lg
     // Between the two named steps, and only ever a gutter — which is why it is here and not
     // in [Space], where it would invite someone to pad a card with it.
-    WindowClass.MEDIUM -> MEDIUM_GUTTER
-    WindowClass.EXPANDED -> Space.xxl
+    this == WindowClass.MEDIUM -> MEDIUM_GUTTER
+    else -> Space.xxl
 }
 
+/**
+ * The vertical half of the same allowance, for a screen's own top and bottom.
+ *
+ * Zero everywhere else: a phone's safe-drawing padding already handles its notch, and adding
+ * a second inset on top of it wastes the one dimension a phone has least of.
+ */
+@Composable
+@ReadOnlyComposable
+fun tvOverscan(): Dp = if (isTelevision) TV_OVERSCAN else 0.dp
+
 private val MEDIUM_GUTTER = 28.dp
+
+/** 5% of a 960dp television window — the allowance every TV design guide asks for. */
+private val TV_OVERSCAN = 48.dp
 
 private val MEDIUM_BREAKPOINT = 600.dp
 private val EXPANDED_BREAKPOINT = 840.dp

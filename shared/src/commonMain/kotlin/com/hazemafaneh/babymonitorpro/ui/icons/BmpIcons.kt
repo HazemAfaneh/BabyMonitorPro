@@ -167,6 +167,33 @@ object BmpIcons {
             }
         }
     }
+
+    /**
+     * Settings — the home screen's second tab.
+     *
+     * Three sliders rather than a gear. A gear at 18dp on a television seen from three metres
+     * is a grey disc, and this set has no teeth small enough to survive the stroke width; two
+     * lines and a knob each read at any size. It also happens to be what the screen contains.
+     */
+    val Sliders: ImageVector by lazy {
+        bmpIcon("Sliders") {
+            strokePath {
+                moveTo(4f, 7f)
+                horizontalLineTo(20f)
+                moveTo(4f, 12f)
+                horizontalLineTo(20f)
+                moveTo(4f, 17f)
+                horizontalLineTo(20f)
+            }
+            // The knobs, solid so they stay distinct from the rails they sit on. Staggered,
+            // because three knobs in a column reads as a single vertical line.
+            solidPath {
+                circle(9f, 7f, 2.1f)
+                circle(15f, 12f, 2.1f)
+                circle(7.5f, 17f, 2.1f)
+            }
+        }
+    }
 }
 
 private fun moon(filled: Boolean): ImageVector =

@@ -15,6 +15,17 @@ expect val supportsCameraRole: Boolean
 /** True where a native notification can be raised for motion/sound alerts. */
 expect val supportsNotifications: Boolean
 
+/**
+ * True on a television — Android TV, Google TV, a set-top box.
+ *
+ * A TV is not merely a large tablet, which is why this is its own flag rather than a width
+ * threshold. It is driven by a remote with no pointer, so focus has to be visible at all
+ * times; it is watched from across a room; its panel is overscanned, so content at the edge
+ * of the window can be physically off the screen; and nobody dismisses a notification on it,
+ * so anything posted there has to take itself away.
+ */
+expect val isTelevision: Boolean
+
 @OptIn(ExperimentalTime::class)
 fun nowMillis(): Long = Clock.System.now().toEpochMilliseconds()
 
