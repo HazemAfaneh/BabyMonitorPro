@@ -104,9 +104,11 @@ import com.hazemafaneh.babymonitorpro.ui.video.MjpegVideo
 import com.hazemafaneh.babymonitorpro.ui.video.VideoStatus
 import com.hazemafaneh.babymonitorpro.ui.video.videoRendersBehindUi
 import kotlinx.coroutines.channels.BufferOverflow
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 /**
  * Chrome-free by design: the video is the interface. Controls surface on tap and fade
@@ -165,6 +167,14 @@ fun LiveViewScreen(
     val reducedMotion = LocalReducedMotion.current
     val window = rememberWindowClass()
     val audioPlayer = remember(endpoint.id) { createAudioPlayer(AudioConfig()) }
+
+    // One client for the life of the screen, not one per toggle. "Until quiet" turns the
+    // sound on and off by itself now, and each cycle used to build and tear down a whole
+    // Ktor client — engine, thread pool and sockets — for a socket that lives for a minute.
+    val audioClient = remember(endpoint.id) { ViewerClient(endpoint) }
+    DisposableEffect(audioClient) {
+        onDispose { audioClient.close() }
+    }
 
     KeepScreenAwake(enabled = settings.keepScreenAwake)
 
@@ -303,33 +313,48 @@ fun LiveViewScreen(
             heardLevel = 0f
             return@LaunchedEffect
         }
-        val client = ViewerClient(endpoint)
-        player.start()
-        try {
-            while (true) {
-                runCatching {
-                    client.audioChunks().collect { chunk ->
-                        player.write(chunk)
-                        // Measured off the chunks already on their way to the speaker, with
-                        // the same detector the camera runs. It reports what *this* device
-                        // is hearing, which is the honest reading for a rail on the far end
-                        // of a network — and it costs one pass over a buffer that has
-                        // already been decoded and copied.
-                        heardMeter.submit(chunk, nowMillis())
-                        heardLevel = heardMeter.lastLevel
-                        // The clock "until quiet" runs against. Anything above the floor
-                        // counts as the room still being awake — this is deliberately a
-                        // lower bar than the camera's alert threshold, so a baby who has
-                        // settled to grizzling does not get the speaker cut mid-grizzle.
-                        if (heardMeter.lastLevel >= QUIET_LEVEL) lastLoudAt = nowMillis()
+        // Off the main thread, and this is not a nicety — it is why the app froze.
+        //
+        // A LaunchedEffect body runs on the composition's dispatcher, which on Android is
+        // the UI thread, and `collect` runs its lambda in the *collector's* context. So
+        // every audio chunk was calling AudioTrack.write() on the main thread, and in
+        // MODE_STREAM that call blocks until the track has room — about a tenth of a second,
+        // ten times a second, for as long as the sound was on. The RMS pass over each chunk
+        // was on the main thread too. The UI thread was starved from the moment sound
+        // started: the picture juddered, the remote stopped responding, and Android
+        // eventually killed the app for not answering.
+        //
+        // It was always broken; it only became easy to hit when an alert started turning the
+        // sound on by itself.
+        withContext(Dispatchers.Default) {
+            player.start()
+            try {
+                while (true) {
+                    runCatching {
+                        audioClient.audioChunks().collect { chunk ->
+                            player.write(chunk)
+                            // Measured off the chunks already on their way to the speaker,
+                            // with the same detector the camera runs. It reports what *this*
+                            // device is hearing, which is the honest reading for a rail on
+                            // the far end of a network — and it costs one pass over a buffer
+                            // that has already been decoded and copied.
+                            heardMeter.submit(chunk, nowMillis())
+                            // Snapshot state is safe to write from any thread; Compose
+                            // schedules the recomposition itself.
+                            heardLevel = heardMeter.lastLevel
+                            // The clock "until quiet" runs against. Anything above the floor
+                            // counts as the room still being awake — this is deliberately a
+                            // lower bar than the camera's alert threshold, so a baby who has
+                            // settled to grizzling does not get the speaker cut mid-grizzle.
+                            if (heardMeter.lastLevel >= QUIET_LEVEL) lastLoudAt = nowMillis()
+                        }
                     }
+                    delay(RECONNECT_DELAY_MILLIS)
                 }
-                delay(RECONNECT_DELAY_MILLIS)
+            } finally {
+                player.stop()
+                heardLevel = 0f
             }
-        } finally {
-            player.stop()
-            client.close()
-            heardLevel = 0f
         }
     }
 

@@ -589,6 +589,63 @@ about, and it is the one thing I cannot reproduce from here.
 
 ---
 
+## Session 5 — 2026-09-15, late — the freeze
+
+**Your report:** after alerts arrived and the sound came on, both viewers — the Tecno and the
+Android TV — lagged, went unresponsive and died. Then, live: "BabyMonitor Pro isn't
+responding."
+
+### Proven, not guessed
+
+Connected to the Tecno over wireless debugging and pulled the ANR trace off the device
+(`/data/anr/anr_2026-09-15-21-11-03-541`). The main thread:
+
+```
+"main" prio=5 tid=1 Native
+  syscall
+  android::ClientProxy::obtainBuffer
+  android::AudioTrack::obtainBuffer
+  android::AudioTrack::write
+  android.media.AudioTrack.write
+  com.hazemafaneh.babymonitorpro.audio.AndroidAudioPlayer.write
+  com.hazemafaneh.babymonitorpro.ui.screens.LiveViewScreenKt$LiveViewScreen$7$1$1$1.emit
+Subject: Input dispatching timed out ... Waited 5000ms for MotionEvent
+```
+
+**The bug.** A `LaunchedEffect` body runs on the composition's dispatcher, which on Android is
+the **main thread**, and `collect` runs its lambda in the *collector's* context. So every
+audio chunk was calling `AudioTrack.write()` on the UI thread — and in `MODE_STREAM` that call
+blocks until the track has room, roughly a tenth of a second, ten times a second, for as long
+as sound was on. The RMS pass over each chunk ran there too. The UI thread was starved from
+the moment the sound started: the picture juddered, input stopped being dispatched, and
+Android killed the app for not answering.
+
+**This was always broken.** Sound on a viewer has always played from the main thread. What
+changed is that an alert now turns the sound on by itself, so what used to need a deliberate
+tap became something the app did to itself the first time the baby made a noise — which is
+why it only surfaced now, and why it hit both viewers at once.
+
+### Fixed
+
+- The whole audio pump now runs inside `withContext(Dispatchers.Default)`: `AudioTrack.write`,
+  the RMS pass and the level bookkeeping are all off the UI thread. Compose snapshot state is
+  safe to write from any thread, so the meter still updates normally.
+- One `ViewerClient` for the life of the screen instead of one per toggle. "Until quiet" turns
+  sound on and off by itself now, and each cycle was building and tearing down a whole Ktor
+  client — engine, thread pool, sockets — for a socket that lives a minute.
+
+### Verified
+
+- Installed on the Tecno over wireless adb, opened the live view, tapped: **the chrome came
+  back**, which a hung app cannot do. No ANR and no fatal exception in the log since install.
+- Not yet exercised with audio actually flowing — the Huawei was not broadcasting at the time,
+  so the live view sat on "Reconnecting". **The real test is: broadcast from the Huawei, let
+  an alert turn the sound on, and leave it.**
+- The TV still had the hanging build; the fixed APK is pushed to the Tecno's Downloads folder
+  and needs sideloading there again.
+
+---
+
 ## Needs a Mac — the complete iOS list
 
 Everything below is iOS-only and **none of it has been compiled**, because iOS targets cannot
