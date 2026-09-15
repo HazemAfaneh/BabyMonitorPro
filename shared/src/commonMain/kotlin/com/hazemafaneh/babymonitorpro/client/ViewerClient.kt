@@ -128,7 +128,11 @@ class ViewerClient(
     }
 
     private companion object {
-        const val READ_BUFFER = 16 * 1024
+        /**
+         * Sized to take a whole 720p frame in one or two reads. At 16 KB a typical frame
+         * arrived in seven pieces, and each piece was another pass through the parser.
+         */
+        const val READ_BUFFER = 128 * 1024
     }
 }
 

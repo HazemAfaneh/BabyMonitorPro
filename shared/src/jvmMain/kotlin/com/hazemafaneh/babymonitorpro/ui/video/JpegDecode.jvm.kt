@@ -4,5 +4,6 @@ import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.toComposeImageBitmap
 import org.jetbrains.skia.Image
 
-actual fun decodeJpegFrame(bytes: ByteArray): ImageBitmap? =
+// Desktop draws the full frame; the bound is advisory and a laptop has the CPU to ignore it.
+actual fun decodeJpegFrame(bytes: ByteArray, maxWidth: Int): ImageBitmap? =
     runCatching { Image.makeFromEncoded(bytes).toComposeImageBitmap() }.getOrNull()

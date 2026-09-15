@@ -120,6 +120,6 @@ actual fun MjpegVideo(
 }
 
 /** Web never decodes frames itself — see [MjpegVideo]. */
-actual fun decodeJpegFrame(bytes: ByteArray): ImageBitmap? = null
+actual fun decodeJpegFrame(bytes: ByteArray, maxWidth: Int): ImageBitmap? = null
 
 actual val videoRendersBehindUi: Boolean = true

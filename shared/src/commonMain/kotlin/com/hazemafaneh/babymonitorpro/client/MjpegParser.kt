@@ -37,17 +37,28 @@ class MjpegParser(boundary: String = "frame") {
         private set
 
     private val boundaryMarker = "--$boundary".encodeToByteArray()
-    private var buffer = ByteArray(0)
+
+    /**
+     * Pending bytes live in the first [len] slots of [buf]; the rest is spare capacity.
+     *
+     * It used to be a plain array rebuilt with `buffer + chunk` on every read. A 100 KB
+     * frame arriving in 16 KB pieces then copied 16, then 32, then 48 KB and so on —
+     * close to half a megabyte of copying per frame before the decoder ever saw it, on
+     * the phone doing the watching. Now a read is appended in place, and the only copy
+     * per frame is the one that hands the frame out.
+     */
+    private var buf = ByteArray(INITIAL_CAPACITY)
+    private var len = 0
     private var framing = Framing.UNKNOWN
 
     /** Appends [chunk] and returns every frame that is now complete. */
     fun feed(chunk: ByteArray, length: Int = chunk.size): List<ByteArray> {
-        // Always copy. Callers read into one reused array — ViewerClient hands the same
-        // 16 KB buffer to every readAvailable — so keeping the caller's array whenever a
-        // read happened to fill it exactly left the pending frame to be overwritten in
-        // place by the next read. That corrupts whichever frame straddled the boundary,
-        // which surfaces as a decode failure rather than anything pointing back here.
-        buffer = if (buffer.isEmpty()) chunk.copyOf(length) else buffer + chunk.copyOf(length)
+        // Always copy in. Callers read into one reused array — ViewerClient hands the same
+        // buffer to every readAvailable — so holding a reference to it would leave the
+        // pending frame to be overwritten in place by the next read.
+        ensureCapacity(len + length)
+        chunk.copyInto(buf, len, 0, length)
+        len += length
 
         if (framing == Framing.UNKNOWN) {
             framing = sniff()
@@ -69,21 +80,38 @@ class MjpegParser(boundary: String = "frame") {
     }
 
     fun reset() {
-        buffer = ByteArray(0)
+        len = 0
         framing = Framing.UNKNOWN
     }
 
+    private fun ensureCapacity(needed: Int) {
+        if (buf.size >= needed) return
+        buf = buf.copyOf(maxOf(needed, buf.size * 2))
+    }
+
+    /** Drops the first [count] pending bytes, sliding the rest to the front. */
+    private fun consume(count: Int) {
+        if (count <= 0) return
+        if (count < len) buf.copyInto(buf, 0, count, len)
+        len -= count
+    }
+
+    /** Copies out [from, to) as a frame of its own, ready to leave this buffer. */
+    private fun slice(from: Int, to: Int): ByteArray = buf.copyOfRange(from, to)
+
+    private fun find(needle: ByteArray, from: Int): Int = indexOf(buf, len, needle, from)
+
     /** A multipart stream opens on its boundary; a stripped one opens on a JPEG SOI. */
     private fun sniff(): Framing = when {
-        startsWithSoi(buffer) -> Framing.BARE_JPEG
-        indexOf(buffer, boundaryMarker, 0) >= 0 -> Framing.MULTIPART
+        startsWithSoi() -> Framing.BARE_JPEG
+        find(boundaryMarker, 0) >= 0 -> Framing.MULTIPART
         // A boundary can straddle a read, so a short buffer proves nothing either way.
-        buffer.size < boundaryMarker.size -> Framing.UNKNOWN
+        len < boundaryMarker.size -> Framing.UNKNOWN
         else -> Framing.MULTIPART
     }
 
-    private fun startsWithSoi(data: ByteArray): Boolean =
-        data.size >= 2 && data[0] == MARKER && data[1] == SOI
+    private fun startsWithSoi(): Boolean =
+        len >= 2 && buf[0] == MARKER && buf[1] == SOI
 
     /**
      * One JPEG, walked segment by segment rather than scanned for a trailing `FF D9`.
@@ -93,12 +121,12 @@ class MjpegParser(boundary: String = "frame") {
      */
     private fun extractBareJpeg(): ByteArray? {
         while (true) {
-            val start = indexOf(buffer, SOI_MARKER, 0)
+            val start = find(SOI_MARKER, 0)
             if (start < 0) {
-                if (buffer.size > 1) buffer = buffer.copyOfRange(buffer.size - 1, buffer.size)
+                if (len > 1) consume(len - 1)
                 return null
             }
-            when (val scan = scanJpeg(buffer, start)) {
+            when (val scan = scanJpeg(buf, len, start)) {
                 Scan.Incomplete -> return null
 
                 // The frame ended at the next picture's SOI instead of its own EOI, so it
@@ -108,12 +136,12 @@ class MjpegParser(boundary: String = "frame") {
                 // frame is damaged, not just the one that was lost.
                 is Scan.Damaged -> {
                     damagedFrames++
-                    buffer = buffer.copyOfRange(scan.resumeAt, buffer.size)
+                    consume(scan.resumeAt)
                 }
 
                 is Scan.Complete -> {
-                    val frame = buffer.copyOfRange(start, scan.end)
-                    buffer = buffer.copyOfRange(scan.end, buffer.size)
+                    val frame = slice(start, scan.end)
+                    consume(scan.end)
                     return frame
                 }
             }
@@ -121,38 +149,36 @@ class MjpegParser(boundary: String = "frame") {
     }
 
     private fun extractFrame(): ByteArray? {
-        val boundaryAt = indexOf(buffer, boundaryMarker, 0)
+        val boundaryAt = find(boundaryMarker, 0)
         if (boundaryAt < 0) {
             // Keep only a boundary-sized tail; the rest can never start a boundary.
-            if (buffer.size > boundaryMarker.size) {
-                buffer = buffer.copyOfRange(buffer.size - boundaryMarker.size, buffer.size)
-            }
+            if (len > boundaryMarker.size) consume(len - boundaryMarker.size)
             return null
         }
 
         val headerStart = boundaryAt + boundaryMarker.size
-        val headerEnd = indexOf(buffer, HEADER_TERMINATOR, headerStart)
+        val headerEnd = find(HEADER_TERMINATOR, headerStart)
         if (headerEnd < 0) return null
 
-        val headers = buffer.decodeToString(headerStart, headerEnd)
+        val headers = buf.decodeToString(headerStart, headerEnd)
         val bodyStart = headerEnd + HEADER_TERMINATOR.size
         val contentLength = contentLengthOf(headers)
 
         if (contentLength != null) {
             val bodyEnd = bodyStart + contentLength
-            if (buffer.size < bodyEnd) return null
-            val frame = buffer.copyOfRange(bodyStart, bodyEnd)
-            buffer = buffer.copyOfRange(bodyEnd, buffer.size)
+            if (len < bodyEnd) return null
+            val frame = slice(bodyStart, bodyEnd)
+            consume(bodyEnd)
             return frame
         }
 
         // No Content-Length: the frame runs up to the next boundary.
-        val nextBoundary = indexOf(buffer, boundaryMarker, bodyStart)
+        val nextBoundary = find(boundaryMarker, bodyStart)
         if (nextBoundary < 0) return null
         var bodyEnd = nextBoundary
-        if (bodyEnd >= 2 && buffer[bodyEnd - 2] == CR && buffer[bodyEnd - 1] == LF) bodyEnd -= 2
-        val frame = buffer.copyOfRange(bodyStart, bodyEnd)
-        buffer = buffer.copyOfRange(nextBoundary, buffer.size)
+        if (bodyEnd >= 2 && buf[bodyEnd - 2] == CR && buf[bodyEnd - 1] == LF) bodyEnd -= 2
+        val frame = slice(bodyStart, bodyEnd)
+        consume(nextBoundary)
         return frame
     }
 
@@ -164,6 +190,9 @@ class MjpegParser(boundary: String = "frame") {
         ?.toIntOrNull()
 
     private companion object {
+        /** One 720p frame at the stream's quality, with room to spare; grows if it must. */
+        const val INITIAL_CAPACITY = 256 * 1024
+
         const val CR: Byte = 13
         const val LF: Byte = 10
         val HEADER_TERMINATOR = byteArrayOf(CR, LF, CR, LF)
@@ -176,10 +205,10 @@ class MjpegParser(boundary: String = "frame") {
          * Walks one JPEG from [from]. A second SOI before this picture's EOI means the
          * frame was truncated on the wire and the next one has already begun.
          */
-        fun scanJpeg(data: ByteArray, from: Int): Scan {
+        fun scanJpeg(data: ByteArray, size: Int, from: Int): Scan {
             var at = from + 2
             while (true) {
-                if (at + 1 >= data.size) return Scan.Incomplete
+                if (at + 1 >= size) return Scan.Incomplete
                 if (data[at] != MARKER) {
                     at++
                     continue
@@ -192,12 +221,12 @@ class MjpegParser(boundary: String = "frame") {
                     // Standalone markers: TEM and the restart markers carry no payload.
                     0x01, in 0xD0..0xD7 -> at += 2
                     0xDA -> {
-                        val header = segmentLength(data, at) ?: return Scan.Incomplete
+                        val header = segmentLength(data, size, at) ?: return Scan.Incomplete
                         at += 2 + header
                         // Entropy-coded scan data. A literal 0xFF inside it is stuffed as
                         // FF 00, so any other marker byte here ends the scan.
                         while (true) {
-                            if (at + 1 >= data.size) return Scan.Incomplete
+                            if (at + 1 >= size) return Scan.Incomplete
                             if (data[at] != MARKER) {
                                 at++
                                 continue
@@ -217,23 +246,24 @@ class MjpegParser(boundary: String = "frame") {
                     else -> {
                         // Not a marker carrying a length: the stream is out of step here.
                         if (marker < 0xC0) return Scan.Damaged(at + 2)
-                        val length = segmentLength(data, at) ?: return Scan.Incomplete
+                        val length = segmentLength(data, size, at) ?: return Scan.Incomplete
                         at += 2 + length
                     }
                 }
             }
         }
 
-        fun segmentLength(data: ByteArray, markerAt: Int): Int? {
-            if (markerAt + 3 >= data.size) return null
+        fun segmentLength(data: ByteArray, size: Int, markerAt: Int): Int? {
+            if (markerAt + 3 >= size) return null
             val length = ((data[markerAt + 2].toInt() and 0xFF) shl 8) or
                 (data[markerAt + 3].toInt() and 0xFF)
             return if (length < 2) null else length
         }
 
-        fun indexOf(haystack: ByteArray, needle: ByteArray, from: Int): Int {
-            if (needle.isEmpty() || haystack.size < needle.size) return -1
-            outer@ for (i in from.coerceAtLeast(0)..haystack.size - needle.size) {
+        /** Searches the first [size] bytes of [haystack]; anything past that is stale. */
+        fun indexOf(haystack: ByteArray, size: Int, needle: ByteArray, from: Int): Int {
+            if (needle.isEmpty() || size < needle.size) return -1
+            outer@ for (i in from.coerceAtLeast(0)..size - needle.size) {
                 for (j in needle.indices) {
                     if (haystack[i + j] != needle[j]) continue@outer
                 }
