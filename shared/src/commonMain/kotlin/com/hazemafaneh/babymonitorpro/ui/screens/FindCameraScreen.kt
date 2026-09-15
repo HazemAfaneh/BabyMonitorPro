@@ -12,7 +12,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.safeContentPadding
+import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
@@ -36,6 +36,21 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import com.hazemafaneh.babymonitorpro.ui.components.PairingCelebration
+import com.hazemafaneh.babymonitorpro.ui.components.pressScale
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import com.hazemafaneh.babymonitorpro.ui.components.initialFocus
+import com.hazemafaneh.babymonitorpro.ui.components.pressable
+import com.hazemafaneh.babymonitorpro.ui.theme.Tint
+import com.hazemafaneh.babymonitorpro.ui.components.CARD_BORDER
+import androidx.compose.ui.unit.sp
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.material3.Icon
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.BorderStroke
 import com.hazemafaneh.babymonitorpro.core.CameraEndpoint
 import com.hazemafaneh.babymonitorpro.core.PairingUri
 import com.hazemafaneh.babymonitorpro.core.isLinkLocalIpv4
@@ -43,15 +58,17 @@ import com.hazemafaneh.babymonitorpro.discovery.createBrowser
 import com.hazemafaneh.babymonitorpro.discovery.ownLanAddresses
 import com.hazemafaneh.babymonitorpro.store.AppSettings
 import com.hazemafaneh.babymonitorpro.ui.components.Chevron
-import com.hazemafaneh.babymonitorpro.ui.components.MonoValue
-import com.hazemafaneh.babymonitorpro.ui.components.NavRow
 import com.hazemafaneh.babymonitorpro.ui.components.PrivacyLine
-import com.hazemafaneh.babymonitorpro.ui.components.SectionCard
 import com.hazemafaneh.babymonitorpro.ui.components.SectionLabel
 import com.hazemafaneh.babymonitorpro.ui.layout.gutter
 import com.hazemafaneh.babymonitorpro.ui.layout.rememberWindowClass
 import com.hazemafaneh.babymonitorpro.ui.scan.QrScanner
 import com.hazemafaneh.babymonitorpro.ui.scan.qrScanningSupported
+import androidx.compose.ui.graphics.vector.ImageVector
+import com.hazemafaneh.babymonitorpro.ui.components.IconPlate
+import com.hazemafaneh.babymonitorpro.ui.components.PlateSize
+import com.hazemafaneh.babymonitorpro.ui.icons.BmpIcons
+import com.hazemafaneh.babymonitorpro.ui.theme.BmpTheme
 import com.hazemafaneh.babymonitorpro.ui.theme.Space
 import com.hazemafaneh.babymonitorpro.ui.theme.Touch
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -79,7 +96,16 @@ fun FindCameraScreen(
     var scannerDenied by remember { mutableStateOf(false) }
     var manualOpen by remember { mutableStateOf(false) }
 
-    val browser = remember { createBrowser() }
+    // Held between the scan landing and the live view opening, so the celebration has
+    // something to name. Null every other moment.
+    var paired by remember { mutableStateOf<CameraEndpoint?>(null) }
+
+    // Bumped by the Refresh button. Everything keyed on it — the browser itself and the
+    // effect that runs it — is torn down and rebuilt, which is what "search again" has to
+    // mean: mDNS answers are cached, and a browser that has already decided the network is
+    // empty will happily go on saying so.
+    var discoveryRound by remember { mutableStateOf(0) }
+    val browser = remember(discoveryRound) { createBrowser() }
     val announced by remember(browser) {
         browser?.cameras ?: MutableStateFlow(emptyList<CameraEndpoint>())
     }.collectAsState()
@@ -105,6 +131,15 @@ fun FindCameraScreen(
         onDispose { browser?.stop() }
     }
 
+    val justPaired = paired
+    if (justPaired != null) {
+        PairingCelebration(
+            cameraName = justPaired.name,
+            onDone = { onConnect(justPaired) },
+        )
+        return
+    }
+
     if (scanning) {
         ScanOverlay(
             denied = scannerDenied,
@@ -117,13 +152,14 @@ fun FindCameraScreen(
             onCode = { raw ->
                 val parsed = PairingUri.parse(raw) ?: return@ScanOverlay
                 scanning = false
-                onConnect(
-                    CameraEndpoint(
-                        name = parsed.host,
-                        host = parsed.host,
-                        port = parsed.port,
-                        source = CameraEndpoint.Source.QR,
-                    ),
+                // The celebration navigates when it is finished. Only the scanned route
+                // gets it — typing an address in is not a moment, and a row tap is a
+                // choice the parent already knew the answer to.
+                paired = CameraEndpoint(
+                    name = parsed.host,
+                    host = parsed.host,
+                    port = parsed.port,
+                    source = CameraEndpoint.Source.QR,
                 )
             },
         )
@@ -139,32 +175,68 @@ fun FindCameraScreen(
         modifier = Modifier
             .fillMaxSize()
             .background(MaterialTheme.colorScheme.background)
-            .safeContentPadding()
+            .safeDrawingPadding()
             .verticalScroll(rememberScrollState())
             .padding(horizontal = window.gutter()),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
         Column(Modifier.widthIn(max = CONTENT_MAX_WIDTH)) {
             Row(
-                Modifier.fillMaxWidth().heightIn(min = Touch.min),
-                horizontalArrangement = Arrangement.SpaceBetween,
+                Modifier
+                    .fillMaxWidth()
+                    .padding(top = Space.xxs, bottom = Space.sm)
+                    .heightIn(min = Touch.min),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                Text(
-                    text = "Find a camera",
-                    style = MaterialTheme.typography.titleLarge,
-                    fontWeight = FontWeight.SemiBold,
-                    color = MaterialTheme.colorScheme.onBackground,
+                // The moon is the viewer role's mark, the same one the role picker's second
+                // card carries — so arriving here confirms which half of the app you chose.
+                IconPlate(
+                    icon = BmpIcons.Moon,
+                    fill = BmpTheme.tints.grape.fill,
+                    contentColor = BmpTheme.tints.grape.glyph,
+                    size = PlateSize.small,
                 )
-                TextButton(onClick = onBack) { Text("Back") }
+                Spacer(Modifier.width(Space.xs))
+                Text(
+                    text = "Find your camera",
+                    style = MaterialTheme.typography.titleLarge.copy(fontSize = TITLE_TEXT),
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    modifier = Modifier.weight(1f),
+                )
+                TextButton(
+                    onClick = onBack,
+                    colors = ButtonDefaults.textButtonColors(
+                        contentColor = MaterialTheme.colorScheme.secondary,
+                    ),
+                ) {
+                    Text(
+                        text = "Back",
+                        style = MaterialTheme.typography.labelLarge.copy(fontSize = ACTION_TEXT),
+                        fontWeight = FontWeight.Bold,
+                    )
+                }
             }
 
-            Spacer(Modifier.height(Space.sm))
-
-            SectionCard(title = if (discoveryImpossible) "On this network" else "On this network") {
-                SectionLabel(if (discoveryImpossible) "not available here" else "mDNS · local only")
-                Spacer(Modifier.height(Space.sm))
+            // Discovery owns the top card at full width. It is the route that costs the
+            // parent nothing, and the two below it are the ways out when it fails.
+            DiscoveryCard(
+                meta = when {
+                    discoveryImpossible -> "not available here"
+                    discovered.isEmpty() -> "mDNS · local only"
+                    discovered.size == 1 -> "1 found"
+                    else -> "${discovered.size} found"
+                },
+                // Nothing to search again with in a browser, so the control is simply absent
+                // there rather than present and dead.
+                onRefresh = if (discoveryImpossible) null else {
+                    { discoveryRound++ }
+                },
+            ) {
                 when {
+                    // No plate on this one. It is a dead end rather than a wait, and the
+                    // baby icons stay off anything that has gone wrong — a friendly mark
+                    // over a sentence saying the thing cannot work reads as a shrug.
                     discoveryImpossible -> EmptyNote(
                         title = "This browser cannot search your network",
                         note = "Browsers have no way to look for devices on your WiFi. " +
@@ -172,17 +244,23 @@ fun FindCameraScreen(
                     )
 
                     discovered.isEmpty() -> EmptyNote(
-                        title = "Still looking",
-                        note = "Open BabyMonitor Pro on the camera device and choose " +
-                            "\"Use this device as Camera\".",
+                        icon = BmpIcons.House,
+                        title = "Still looking around",
+                        note = "Open BabyMonitor Pro on the phone you're leaving in the " +
+                            "nursery and tap Use this device as Camera.",
                     )
 
-                    else -> Column {
-                        for (camera in discovered) {
+                    else -> Column(verticalArrangement = Arrangement.spacedBy(ROW_GAP)) {
+                        discovered.forEachIndexed { index, camera ->
                             // The row is the action. One result should be one obvious tap,
                             // not an address to read and a Connect button to find.
                             DiscoveredRow(
                                 camera = camera,
+                                // Only the first is tinted. With every row lemon the list
+                                // read as a set of buttons of equal weight; with one tinted
+                                // the eye lands on the camera most likely to be the answer
+                                // and can still see the others are the same kind of thing.
+                                highlighted = index == 0,
                                 onClick = { onConnect(camera) },
                             )
                         }
@@ -190,151 +268,427 @@ fun FindCameraScreen(
                 }
             }
 
-            if (!discoveryImpossible) {
-                Spacer(Modifier.height(Space.sm))
-                SectionCard(title = "Other ways in") {
+            Spacer(Modifier.height(Space.sm))
+
+            if (showManual) {
+                ManualCard(
+                    title = if (discovered.isEmpty()) "Type the address" else "Or type the address",
+                    host = manualHost,
+                    error = error,
+                    onHostChange = {
+                        manualHost = it
+                        error = null
+                    },
+                    onConnect = {
+                        val parsed = parseAddress(manualHost)
+                        if (parsed == null) {
+                            // Show the shape wanted. "That does not look like an address"
+                            // tells a tired parent nothing they can act on.
+                            error = "That is not a full address. It should look like " +
+                                "192.168.1.42, or 192.168.1.42:8080 if the port was changed."
+                        } else {
+                            settings.lastManualHost = manualHost
+                            onConnect(
+                                CameraEndpoint(
+                                    name = parsed.host,
+                                    host = parsed.host,
+                                    port = parsed.port,
+                                    source = CameraEndpoint.Source.MANUAL,
+                                ),
+                            )
+                        }
+                    },
+                )
+            } else {
+                // Two small equals, side by side. Stacked full-width they read as a ranking,
+                // and neither of them outranks the other: which one is faster depends on
+                // whether the parent is holding both devices.
+                Row(horizontalArrangement = Arrangement.spacedBy(Space.sm)) {
                     if (qrScanningSupported) {
-                        NavRow(
-                            label = "Scan QR",
-                            description = "Both devices in hand",
+                        RouteCard(
+                            icon = BmpIcons.Camera,
+                            tint = BmpTheme.tints.sky,
+                            title = "Scan the code",
+                            note = "Fastest, if both phones are in the room",
                             onClick = {
                                 scannerDenied = false
                                 scanning = true
                             },
+                            modifier = Modifier.weight(1f),
                         )
                     }
-                    NavRow(
-                        label = "Type address",
-                        description = "If nothing appears above",
-                        onClick = { manualOpen = !manualOpen },
+                    RouteCard(
+                        // The footprint, same as the card this address is printed on. The
+                        // two are the ends of one act: the camera screen shows the address,
+                        // this is where it gets typed back in.
+                        icon = BmpIcons.Footprint,
+                        tint = null,
+                        title = "Type the address",
+                        note = "It's on the camera screen",
+                        onClick = { manualOpen = true },
+                        modifier = Modifier.weight(1f),
                     )
-                }
-            }
-
-            if (showManual) {
-                Spacer(Modifier.height(Space.sm))
-                SectionCard(title = "Type the address") {
-                    OutlinedTextField(
-                        value = manualHost,
-                        onValueChange = {
-                            manualHost = it
-                            error = null
-                        },
-                        label = { Text("Address") },
-                        placeholder = { Text("192.168.1.42") },
-                        singleLine = true,
-                        isError = error != null,
-                        modifier = Modifier.fillMaxWidth(),
-                    )
-                    error?.let {
-                        Spacer(Modifier.height(Space.xs))
-                        Text(
-                            text = it,
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.error,
-                        )
-                    }
-                    Spacer(Modifier.height(Space.sm))
-                    Button(
-                        onClick = {
-                            val parsed = parseAddress(manualHost)
-                            if (parsed == null) {
-                                // Show the shape wanted. "That does not look like an
-                                // address" tells a tired parent nothing they can act on.
-                                error = "That is not a full address. It should look like " +
-                                    "192.168.1.42, or 192.168.1.42:8080 if the port was changed."
-                            } else {
-                                settings.lastManualHost = manualHost
-                                onConnect(
-                                    CameraEndpoint(
-                                        name = parsed.host,
-                                        host = parsed.host,
-                                        port = parsed.port,
-                                        source = CameraEndpoint.Source.MANUAL,
-                                    ),
-                                )
-                            }
-                        },
-                        // Disabled rather than allowed to fail silently.
-                        enabled = manualHost.isNotBlank(),
-                        modifier = Modifier.fillMaxWidth().height(52.dp),
-                    ) {
-                        Text("Connect")
-                    }
                 }
             }
 
             Spacer(Modifier.height(Space.md))
-            PrivacyLine(address = null)
-            Spacer(Modifier.height(Space.xxs))
-            Text(
-                text = if (discoveryImpossible) {
-                    "Nothing about this connection leaves your network — the browser talks " +
-                        "straight to the camera."
-                } else {
-                    "Searching this WiFi network only. No device on the internet can be " +
-                        "found here, and none is contacted."
+            PrivacyFooter(
+                text = when {
+                    discoveryImpossible ->
+                        "Nothing about this connection leaves your network — the browser " +
+                            "talks straight to the camera."
+
+                    discovered.isEmpty() ->
+                        "We only search your own WiFi. Nothing on the internet is " +
+                            "contacted, and nothing out there can find this camera."
+
+                    else ->
+                        "Everything you see here is on your WiFi. The row tells you which " +
+                            "device it is before you tap it."
                 },
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
             Spacer(Modifier.height(Space.xl))
         }
     }
 }
 
+/** The route that costs nothing, and how it is going. */
 @Composable
-private fun EmptyNote(title: String, note: String) {
-    Column {
+private fun DiscoveryCard(
+    meta: String,
+    onRefresh: (() -> Unit)?,
+    content: @Composable () -> Unit,
+) {
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        color = MaterialTheme.colorScheme.surface,
+        shape = MaterialTheme.shapes.large,
+        border = BorderStroke(CARD_BORDER, MaterialTheme.colorScheme.outlineVariant),
+    ) {
+        Column(Modifier.padding(Space.lg)) {
+            Row(
+                Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                SectionLabel("On this network")
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    // How the search works, stated rather than implied. A parent who wonders
+                    // whether this app is scanning the internet gets the answer in the corner
+                    // of the card doing the scanning.
+                    Text(
+                        text = meta,
+                        style = MaterialTheme.typography.labelMedium.copy(
+                            fontFamily = FontFamily.Monospace,
+                            fontSize = META_TEXT,
+                        ),
+                        color = MaterialTheme.colorScheme.outline,
+                    )
+                    if (onRefresh != null) {
+                        Spacer(Modifier.width(Space.xs))
+                        RefreshButton(onRefresh)
+                    }
+                }
+            }
+            Spacer(Modifier.height(Space.sm))
+            content()
+        }
+    }
+}
+
+/**
+ * Search the network again.
+ *
+ * A labelled pill rather than a bare circular-arrow icon, and that is a television decision
+ * as much as an accessibility one: a 24dp glyph in a card corner is both unreadable from a
+ * sofa and a target the D-pad has to find. This one carries the word, stands 48dp tall, and
+ * takes the same focus ring every other control on the screen has — so the remote can see it
+ * coming and land on it.
+ *
+ * It is also the control a television needs most. A TV is usually switched on long after the
+ * nursery phone was set up, so its first discovery sweep can easily be the one that missed —
+ * and there is no pull-to-refresh on a device with no touchscreen.
+ */
+@Composable
+private fun RefreshButton(onClick: () -> Unit) {
+    Surface(
+        modifier = Modifier
+            .heightIn(min = Touch.min)
+            // Where the remote starts on this screen. It is at the top of the card that
+            // matters, and one press down from it is the list of cameras — so the first
+            // thing the D-pad does is either open a camera or search again, which are the
+            // only two things this screen is for.
+            .initialFocus()
+            .pressable(onClick = onClick, focusShape = MaterialTheme.shapes.extraLarge),
+        shape = MaterialTheme.shapes.extraLarge,
+        color = MaterialTheme.colorScheme.surface,
+        border = BorderStroke(CARD_BORDER, MaterialTheme.colorScheme.outlineVariant),
+    ) {
+        Row(
+            Modifier.padding(horizontal = Space.sm),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                text = "Search again",
+                style = MaterialTheme.typography.labelLarge.copy(fontSize = ACTION_TEXT),
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.secondary,
+            )
+        }
+    }
+}
+
+/**
+ * Nothing found yet, or nothing findable here.
+ *
+ * Centred and given a plate, because an empty card with a line of grey text in the corner
+ * reads as a thing that failed rather than a thing still working.
+ */
+@Composable
+private fun EmptyNote(title: String, note: String, icon: ImageVector? = null) {
+    Column(
+        Modifier.fillMaxWidth().padding(top = Space.sm, bottom = Space.xxs),
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        if (icon != null) {
+            IconPlate(
+                icon = icon,
+                fill = BmpTheme.tints.lemon.fill,
+                contentColor = BmpTheme.tints.lemon.glyph,
+                size = PlateSize.hero,
+            )
+            Spacer(Modifier.height(Space.sm))
+        }
         Text(
             text = title,
-            style = MaterialTheme.typography.bodyLarge,
+            style = MaterialTheme.typography.titleMedium.copy(fontSize = EMPTY_TITLE),
+            fontWeight = FontWeight.Bold,
             color = MaterialTheme.colorScheme.onSurface,
+            textAlign = TextAlign.Center,
         )
         Spacer(Modifier.height(Space.xxs))
         Text(
             text = note,
-            style = MaterialTheme.typography.bodyMedium,
+            style = MaterialTheme.typography.bodySmall.copy(
+                fontSize = EMPTY_NOTE,
+                lineHeight = EMPTY_NOTE_LINE,
+            ),
             color = MaterialTheme.colorScheme.onSurfaceVariant,
+            textAlign = TextAlign.Center,
+            modifier = Modifier.widthIn(max = EMPTY_NOTE_WIDTH),
         )
     }
 }
 
+/** One camera, and the whole row is the way to it. */
 @Composable
 private fun DiscoveredRow(
     camera: CameraEndpoint,
+    highlighted: Boolean,
     onClick: () -> Unit,
 ) {
+    val lemon = BmpTheme.tints.lemon
+    val fill = if (highlighted) lemon.fill else MaterialTheme.colorScheme.surfaceVariant
+    val border = if (highlighted) lemon.border else MaterialTheme.colorScheme.outlineVariant
+    val addressColor =
+        if (highlighted) lemon.glyph else MaterialTheme.colorScheme.onSurfaceVariant
+
     Surface(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(vertical = Space.xxs)
-            .clip(MaterialTheme.shapes.medium)
-            .clickable(onClick = onClick),
-        color = MaterialTheme.colorScheme.surfaceVariant,
-        shape = MaterialTheme.shapes.medium,
+            .clip(RoundedCornerShape(ROW_RADIUS))
+            .pressable(onClick = onClick, wide = true),
+        color = fill,
+        shape = RoundedCornerShape(ROW_RADIUS),
+        border = BorderStroke(CARD_BORDER, border),
     ) {
         Row(
-            Modifier.padding(Space.md).heightIn(min = Touch.min),
+            Modifier
+                .heightIn(min = ROW_HEIGHT)
+                .padding(horizontal = ROW_H_PADDING, vertical = ROW_V_PADDING),
             verticalAlignment = Alignment.CenterVertically,
         ) {
+            // Same teddy the camera screen shows for itself. This is the one row in the
+            // app a parent taps without reading, and the mark is what they aim at.
+            IconPlate(
+                icon = BmpIcons.Teddy,
+                fill = MaterialTheme.colorScheme.surface,
+                contentColor = if (highlighted) lemon.glyph else MaterialTheme.colorScheme.onSurfaceVariant,
+                size = PlateSize.row,
+            )
+            Spacer(Modifier.width(Space.sm))
             Column(Modifier.weight(1f)) {
                 Text(
                     text = camera.name,
-                    style = MaterialTheme.typography.titleMedium,
+                    style = MaterialTheme.typography.titleMedium.copy(fontSize = ROW_NAME),
+                    fontWeight = FontWeight.Bold,
                     color = MaterialTheme.colorScheme.onSurface,
+                    maxLines = 1,
                 )
                 // The row carries the reason to choose — which device — rather than an id
                 // the parent has to decode.
-                MonoValue(
+                Text(
                     text = camera.id,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    style = MaterialTheme.typography.bodySmall,
+                    style = MaterialTheme.typography.bodySmall.copy(
+                        fontFamily = FontFamily.Monospace,
+                        fontSize = ROW_ADDRESS,
+                    ),
+                    color = addressColor,
+                    maxLines = 1,
                 )
             }
             Spacer(Modifier.width(Space.xs))
-            Chevron()
+            Chevron(color = addressColor)
         }
+    }
+}
+
+/** One of the two ways out when discovery finds nothing. */
+@Composable
+private fun RouteCard(
+    icon: ImageVector,
+    tint: Tint?,
+    title: String,
+    note: String,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Surface(
+        modifier = modifier
+            .clip(MaterialTheme.shapes.large)
+            .pressable(onClick = onClick),
+        color = tint?.fill ?: MaterialTheme.colorScheme.surface,
+        shape = MaterialTheme.shapes.large,
+        border = BorderStroke(
+            CARD_BORDER,
+            tint?.border ?: MaterialTheme.colorScheme.outlineVariant,
+        ),
+    ) {
+        Column(Modifier.padding(start = Space.md, end = Space.md, top = Space.md, bottom = ROUTE_BOTTOM)) {
+            IconPlate(
+                icon = icon,
+                fill = if (tint != null) {
+                    MaterialTheme.colorScheme.surface
+                } else {
+                    MaterialTheme.colorScheme.surfaceVariant
+                },
+                contentColor = tint?.glyph ?: MaterialTheme.colorScheme.onSurfaceVariant,
+                size = PlateSize.row,
+            )
+            Spacer(Modifier.height(Space.xs))
+            Text(
+                text = title,
+                style = MaterialTheme.typography.titleMedium.copy(
+                    fontSize = ROUTE_TITLE,
+                    lineHeight = ROUTE_TITLE_LINE,
+                ),
+                fontWeight = FontWeight.Bold,
+                color = tint?.content ?: MaterialTheme.colorScheme.onSurface,
+            )
+            Spacer(Modifier.height(Space.xxs))
+            Text(
+                text = note,
+                style = MaterialTheme.typography.bodySmall.copy(
+                    fontSize = ROUTE_NOTE,
+                    lineHeight = ROUTE_NOTE_LINE,
+                ),
+                color = tint?.contentMuted ?: MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+    }
+}
+
+/** The address, typed in by hand. */
+@Composable
+private fun ManualCard(
+    title: String,
+    host: String,
+    error: String?,
+    onHostChange: (String) -> Unit,
+    onConnect: () -> Unit,
+) {
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        color = MaterialTheme.colorScheme.surface,
+        shape = MaterialTheme.shapes.large,
+        border = BorderStroke(CARD_BORDER, MaterialTheme.colorScheme.outlineVariant),
+    ) {
+        Column(Modifier.padding(horizontal = Space.lg, vertical = MANUAL_V_PADDING)) {
+            SectionLabel(title)
+            Spacer(Modifier.height(Space.xs))
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(Space.xs),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                OutlinedTextField(
+                    value = host,
+                    onValueChange = onHostChange,
+                    placeholder = { Text("192.168.1.42") },
+                    singleLine = true,
+                    isError = error != null,
+                    textStyle = MaterialTheme.typography.titleMedium.copy(
+                        fontFamily = FontFamily.Monospace,
+                        fontSize = FIELD_TEXT,
+                        fontWeight = FontWeight.Bold,
+                    ),
+                    shape = RoundedCornerShape(FIELD_RADIUS),
+                    modifier = Modifier.weight(1f),
+                )
+                val connectInteraction = remember { MutableInteractionSource() }
+                Button(
+                    onClick = onConnect,
+                    interactionSource = connectInteraction,
+                    // Disabled rather than allowed to fail silently.
+                    enabled = host.isNotBlank(),
+                    shape = RoundedCornerShape(FIELD_RADIUS),
+                    contentPadding = PaddingValues(horizontal = Space.md),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = MaterialTheme.colorScheme.secondary,
+                        contentColor = MaterialTheme.colorScheme.onSecondary,
+                    ),
+                    modifier = Modifier
+                        .heightIn(min = Touch.min)
+                        .pressScale(connectInteraction),
+                ) {
+                    Text(
+                        text = "Connect",
+                        style = MaterialTheme.typography.labelLarge.copy(fontSize = ACTION_TEXT),
+                        fontWeight = FontWeight.Bold,
+                    )
+                }
+            }
+            if (error != null) {
+                Spacer(Modifier.height(Space.xs))
+                Text(
+                    text = error,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.error,
+                )
+            }
+        }
+    }
+}
+
+/** The promise, in the same leaf as everywhere else, with the shield beside it. */
+@Composable
+private fun PrivacyFooter(text: String) {
+    val privacy = BmpTheme.semantic.privacy
+    Row(verticalAlignment = Alignment.Top) {
+        Icon(
+            imageVector = BmpIcons.Shield,
+            contentDescription = null,
+            tint = privacy,
+            modifier = Modifier.size(FOOTER_ICON).padding(top = 1.dp),
+        )
+        Spacer(Modifier.width(Space.xs))
+        Text(
+            text = text,
+            style = MaterialTheme.typography.bodySmall.copy(
+                fontSize = FOOTER_TEXT,
+                lineHeight = FOOTER_LINE,
+            ),
+            color = privacy,
+        )
     }
 }
 
@@ -358,7 +712,7 @@ private fun ScanOverlay(
         Column(
             Modifier
                 .align(Alignment.BottomCenter)
-                .safeContentPadding()
+                .safeDrawingPadding()
                 .padding(Space.xl),
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
@@ -370,7 +724,7 @@ private fun ScanOverlay(
                     text = if (denied) {
                         "Scanning is unavailable without camera access."
                     } else {
-                        "Point at the code on the camera screen"
+                        "Point at the code on the nursery phone"
                     },
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurface,
@@ -397,5 +751,31 @@ private fun parseAddress(input: String): PairingUri.Parsed? =
         ?: PairingUri.parseHostPort(input)?.let { (host, port) ->
             PairingUri.Parsed(host, port)
         }
+
+private val TITLE_TEXT = 21.sp
+private val ACTION_TEXT = 13.sp
+private val META_TEXT = 10.5.sp
+private val EMPTY_TITLE = 17.sp
+private val EMPTY_NOTE = 13.sp
+private val EMPTY_NOTE_LINE = 20.sp
+private val EMPTY_NOTE_WIDTH = 300.dp
+private val ROW_GAP = 9.dp
+private val ROW_RADIUS = 18.dp
+private val ROW_HEIGHT = 64.dp
+private val ROW_H_PADDING = 14.dp
+private val ROW_V_PADDING = 13.dp
+private val ROW_NAME = 16.sp
+private val ROW_ADDRESS = 11.5.sp
+private val ROUTE_TITLE = 15.sp
+private val ROUTE_TITLE_LINE = 19.sp
+private val ROUTE_NOTE = 11.5.sp
+private val ROUTE_NOTE_LINE = 16.sp
+private val ROUTE_BOTTOM = 18.dp
+private val MANUAL_V_PADDING = 18.dp
+private val FIELD_TEXT = 15.sp
+private val FIELD_RADIUS = 14.dp
+private val FOOTER_ICON = 15.dp
+private val FOOTER_TEXT = 11.5.sp
+private val FOOTER_LINE = 17.sp
 
 private val CONTENT_MAX_WIDTH = 560.dp

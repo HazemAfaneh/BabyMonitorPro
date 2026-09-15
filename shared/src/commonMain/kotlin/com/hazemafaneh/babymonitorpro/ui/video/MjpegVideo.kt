@@ -44,8 +44,14 @@ expect fun MjpegVideo(
     onAspectRatio: (Float) -> Unit = {},
 )
 
-/** JPEG -> ImageBitmap. Returns null on web, which never decodes frames itself. */
-expect fun decodeJpegFrame(bytes: ByteArray): ImageBitmap?
+/**
+ * JPEG -> ImageBitmap. Returns null on web, which never decodes frames itself.
+ *
+ * [maxWidth] is the widest picture the caller can show, in pixels, or zero for the full
+ * frame. A decoder that knows the answer is going into a 400px box can do a quarter of
+ * the work; one that does not has to produce all of 720p and let the draw throw it away.
+ */
+expect fun decodeJpegFrame(bytes: ByteArray, maxWidth: Int = 0): ImageBitmap?
 
 /**
  * True where the video is a platform layer sitting *behind* the UI surface (the browser's

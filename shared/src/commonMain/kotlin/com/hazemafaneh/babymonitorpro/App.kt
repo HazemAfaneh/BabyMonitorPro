@@ -17,10 +17,10 @@ import com.hazemafaneh.babymonitorpro.di.appModule
 import com.hazemafaneh.babymonitorpro.store.AppSettings
 import com.hazemafaneh.babymonitorpro.ui.Routes
 import com.hazemafaneh.babymonitorpro.ui.screens.CameraScreen
-import com.hazemafaneh.babymonitorpro.ui.screens.CameraSettingsScreen
 import com.hazemafaneh.babymonitorpro.ui.screens.FindCameraScreen
+import com.hazemafaneh.babymonitorpro.ui.screens.HomeScreen
 import com.hazemafaneh.babymonitorpro.ui.screens.LiveViewScreen
-import com.hazemafaneh.babymonitorpro.ui.screens.RolePickerScreen
+import com.hazemafaneh.babymonitorpro.ui.screens.SettingsScreen
 import com.hazemafaneh.babymonitorpro.ui.theme.BabyMonitorTheme
 import org.koin.compose.KoinApplication
 import org.koin.compose.koinInject
@@ -31,17 +31,27 @@ fun App() {
     KoinApplication(koinConfiguration { modules(appModule) }) {
         val settings = koinInject<AppSettings>()
 
-        // The *preference*, which merely arms night mode. Whether it is currently in force
-        // is [nightActive] below — the two are separate because the screen has to come back
-        // to full brightness the moment it is touched.
-        var nightPreference by remember { mutableStateOf(settings.nightMode) }
-        var nightActive by remember { mutableStateOf(false) }
+        // Night, as one boolean the parent sets with the moon button and nothing else sets
+        // for them. It used to be two — a preference that armed it, and a settle timer that
+        // decided it was actually night six seconds after the last touch — and that pair was
+        // wrong in both directions: it dimmed the screen while a parent was still reading
+        // the pairing address, and it brightened the whole room the instant a sleeve
+        // brushed the phone.
+        //
+        // Held here rather than in the broadcast state on purpose. The nursery phone is in a
+        // dark room and the kitchen tablet is not; sharing this flag would let whichever
+        // device was touched last decide for both.
+        var night by remember { mutableStateOf(settings.nightMode) }
+        val setNight: (Boolean) -> Unit = { on ->
+            night = on
+            settings.nightMode = on
+        }
 
         // The endpoint being watched is held here rather than encoded into the route:
         // it keeps navigation free of URL escaping for device names.
         var target by remember { mutableStateOf<Watch?>(null) }
 
-        BabyMonitorTheme(darkTheme = true, nightActive = nightActive) {
+        BabyMonitorTheme(night = night) {
             val navController = rememberNavController()
 
             // A tapped alert notification, or a bmpro:// link handed over by the OS. It can
@@ -64,39 +74,38 @@ fun App() {
 
             NavHost(navController = navController, startDestination = Routes.ROLE) {
                 composable(Routes.ROLE) {
-                    RolePickerScreen(
+                    HomeScreen(
                         lastRole = settings.lastRole,
+                        night = night,
+                        onNightChanged = setNight,
                         onPick = { role ->
                             settings.lastRole = role
                             navController.navigate(
                                 if (role == Role.CAMERA) Routes.CAMERA else Routes.FIND
                             )
                         },
+                        // Already home: stopping the broadcast from the Settings tab has
+                        // nowhere to navigate to, and popping the only entry would leave an
+                        // empty back stack.
+                        onStop = {},
                     )
                 }
 
                 composable(Routes.CAMERA) {
                     CameraScreen(
-                        nightEnabled = nightPreference,
-                        onNightActiveChanged = { nightActive = it },
+                        night = night,
+                        onNightChanged = setNight,
                         onSettings = { navController.navigate(Routes.CAMERA_SETTINGS) },
                         onStop = { navController.popBackStack(Routes.ROLE, inclusive = false) },
                     )
                 }
 
                 composable(Routes.CAMERA_SETTINGS) {
-                    CameraSettingsScreen(
-                        nightEnabled = nightPreference,
-                        onNightEnabledChanged = {
-                            nightPreference = it
-                            settings.nightMode = it
-                            // Any interaction returns the screen to full brightness; the
-                            // camera screen re-arms the settle timer when it resumes.
-                            nightActive = false
-                        },
+                    SettingsScreen(
+                        night = night,
+                        onNightChanged = setNight,
                         onBack = { navController.popBackStack() },
                         onStop = {
-                            nightActive = false
                             navController.popBackStack(Routes.ROLE, inclusive = false)
                         },
                     )
@@ -121,6 +130,8 @@ fun App() {
                         LiveViewScreen(
                             endpoint = current.endpoint,
                             autoAudio = current.autoAudio,
+                            night = night,
+                            onNightChanged = setNight,
                             onBack = { navController.popBackStack() },
                         )
                     }

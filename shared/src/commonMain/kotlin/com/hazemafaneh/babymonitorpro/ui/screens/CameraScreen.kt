@@ -1,8 +1,6 @@
 package com.hazemafaneh.babymonitorpro.ui.screens
 
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
-import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -15,7 +13,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.safeContentPadding
+import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
@@ -25,7 +23,6 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -42,8 +39,17 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import com.hazemafaneh.babymonitorpro.ui.components.CARD_BORDER
+import androidx.compose.ui.unit.sp
+import androidx.compose.ui.text.withStyle
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.graphics.Color
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.foundation.border
 import com.hazemafaneh.babymonitorpro.core.PairingUri
-import com.hazemafaneh.babymonitorpro.core.nowMillis
 import com.hazemafaneh.babymonitorpro.server.BroadcastConfig
 import com.hazemafaneh.babymonitorpro.server.BroadcastState
 import com.hazemafaneh.babymonitorpro.server.Broadcaster
@@ -54,7 +60,10 @@ import com.hazemafaneh.babymonitorpro.ui.layout.WindowClass
 import com.hazemafaneh.babymonitorpro.ui.layout.gutter
 import com.hazemafaneh.babymonitorpro.ui.layout.rememberWindowClass
 import com.hazemafaneh.babymonitorpro.ui.layout.windowHeight
+import com.hazemafaneh.babymonitorpro.ui.CapturePermissions
+import com.hazemafaneh.babymonitorpro.ui.components.PermissionNotice
 import com.hazemafaneh.babymonitorpro.ui.rememberCapturePermissions
+import com.hazemafaneh.babymonitorpro.ui.components.MoonButton
 import com.hazemafaneh.babymonitorpro.ui.components.OverlayPill
 import com.hazemafaneh.babymonitorpro.ui.components.MonoValue
 import com.hazemafaneh.babymonitorpro.ui.components.PrivacyLine
@@ -64,6 +73,10 @@ import com.hazemafaneh.babymonitorpro.ui.components.SectionLabel
 import com.hazemafaneh.babymonitorpro.ui.components.StatusChip
 import com.hazemafaneh.babymonitorpro.ui.components.StopBroadcastingButton
 import com.hazemafaneh.babymonitorpro.ui.components.StatusTone
+import com.hazemafaneh.babymonitorpro.ui.components.IconPlate
+import com.hazemafaneh.babymonitorpro.ui.components.PlateSize
+import com.hazemafaneh.babymonitorpro.ui.icons.BmpIcons
+import com.hazemafaneh.babymonitorpro.ui.theme.BmpTheme
 import com.hazemafaneh.babymonitorpro.ui.theme.Space
 import com.hazemafaneh.babymonitorpro.ui.theme.Touch
 import com.hazemafaneh.babymonitorpro.ui.video.JpegFrameView
@@ -83,8 +96,8 @@ import org.koin.compose.koinInject
  */
 @Composable
 fun CameraScreen(
-    nightEnabled: Boolean,
-    onNightActiveChanged: (Boolean) -> Unit,
+    night: Boolean,
+    onNightChanged: (Boolean) -> Unit,
     onSettings: () -> Unit,
     onStop: () -> Unit,
 ) {
@@ -95,8 +108,6 @@ fun CameraScreen(
     val window = rememberWindowClass()
 
     val deviceName = remember { settings.deviceName }
-
-    var lastTouch by remember { mutableStateOf(nowMillis()) }
 
     val stateFlow = remember(broadcaster) {
         broadcaster?.state ?: MutableStateFlow(BroadcastState(running = false))
@@ -110,7 +121,13 @@ fun CameraScreen(
     // Both, not just the camera: on Android 14+ a foreground service that claims the
     // microphone type without RECORD_AUDIO granted is killed by the system, and the HTTP
     // server dies with the process.
-    LaunchedEffect(permissions.needsRequest) {
+    // Once, on arrival — not on every change of [needsRequest].
+    //
+    // Keyed on the flag, this effect re-ran itself into a corner: the parent taps Deny, the
+    // flag never changes, and nothing ever asks again. The dialog raised here is the
+    // opening offer, and [CapturePermissionNotice] below is the standing one, so a refusal
+    // now costs the parent a tap rather than the feature.
+    LaunchedEffect(Unit) {
         if (permissions.needsRequest) permissions.request()
     }
 
@@ -128,6 +145,11 @@ fun CameraScreen(
         broadcaster?.start(
             BroadcastConfig(
                 deviceName = deviceName,
+                // Picture size, frame rate and which lens, all from the settings screen —
+                // the capture config used to be the library default, so three settings a
+                // parent could change had no effect on what was actually sent.
+                port = settings.port,
+                capture = settings.captureConfig(),
                 motionSensitivity = settings.motionSensitivity,
                 soundSensitivity = settings.soundSensitivity,
             ),
@@ -139,39 +161,18 @@ fun CameraScreen(
     // the device. Stopping is now only ever an explicit action — the Stop broadcasting
     // button, which navigates back to the role picker.
 
-    // Night settles a moment after the last touch and any touch lifts it. The screen is
-    // being dimmed for the room, not for whoever is still using it — so this reports the
-    // state up and the theme swaps its whole ColorScheme, rather than an alpha being laid
-    // over text that then has to be read at 45%.
-    LaunchedEffect(nightEnabled, lastTouch) {
-        onNightActiveChanged(false)
-        if (!nightEnabled) return@LaunchedEffect
-        delay(DIM_SETTLE_MILLIS)
-        onNightActiveChanged(true)
-    }
-
-    DisposableEffect(Unit) {
-        onDispose { onNightActiveChanged(false) }
-    }
-
-    val touch = Modifier.clickable(
-        interactionSource = remember { MutableInteractionSource() },
-        indication = null,
-        onClickLabel = "Brighten the screen",
-    ) { lastTouch = nowMillis() }
-
     Column(
         modifier = Modifier
             .fillMaxSize()
             .background(MaterialTheme.colorScheme.background)
-            .safeContentPadding()
-            .then(touch),
+            .safeDrawingPadding(),
     ) {
         CameraHeader(
             deviceName = deviceName,
-            address = state.primaryAddress,
             actionLabel = "Settings",
             onAction = onSettings,
+            night = night,
+            onNightChanged = onNightChanged,
             modifier = Modifier.padding(horizontal = window.gutter()),
         )
 
@@ -204,12 +205,15 @@ fun CameraScreen(
                         // column empty and the picture smaller than the card beside it.
                         modifier = Modifier.weight(1f),
                     )
+                    CapturePermissionNotice(permissions)
                     AdvisoryBlock(broadcaster != null, permissions.resolved, permissions.cameraGranted, state)
                 }
                 Column(Modifier.width(RAIL_WIDTH).fillMaxHeight()) {
                     Spacer(Modifier.height(Space.md))
                     PortConflictBanner(state, broadcaster)
                     PairCard(state, window)
+                    Spacer(Modifier.height(Space.sm))
+                    PrivacyLine(state.primaryAddress)
                     // Pinned to the bottom of the rail rather than left under the card. It
                     // is the one destructive control on the screen, and putting distance
                     // between it and the things a parent taps while pairing is the point.
@@ -225,11 +229,18 @@ fun CameraScreen(
                     .padding(horizontal = window.gutter()),
             ) {
                 PreviewBlock(broadcaster?.frames, state, broadcaster != null, permissions.resolved, permissions.cameraGranted, window)
+                CapturePermissionNotice(permissions)
                 AdvisoryBlock(broadcaster != null, permissions.resolved, permissions.cameraGranted, state)
-                Spacer(Modifier.height(Space.md))
+                Spacer(Modifier.height(Space.sm))
                 PortConflictBanner(state, broadcaster)
                 PairCard(state, window)
-                Spacer(Modifier.height(Space.md))
+                Spacer(Modifier.height(Space.sm))
+                // The same slot on every screen: this address, on your network, right now.
+                // A parent can check it against their own router, which is not true of a
+                // paragraph — and it sits with the pairing card because that is the moment
+                // they are deciding whether to trust it.
+                PrivacyLine(state.primaryAddress)
+                Spacer(Modifier.height(Space.sm))
                 StopBroadcastingButton(broadcaster, onStop)
                 Spacer(Modifier.height(Space.xl))
             }
@@ -240,32 +251,58 @@ fun CameraScreen(
 @Composable
 private fun CameraHeader(
     deviceName: String,
-    address: String?,
     actionLabel: String,
     onAction: () -> Unit,
+    night: Boolean,
+    onNightChanged: (Boolean) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     Row(
         modifier
             .fillMaxWidth()
+            .padding(top = Space.xxs, bottom = Space.sm)
             .heightIn(min = Touch.min),
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Column(Modifier.weight(1f)) {
+        // The teddy is this camera's identity — the same mark the discovered row and
+        // the live-view bar carry, so a parent recognises the device before reading it.
+        IconPlate(
+            icon = BmpIcons.Teddy,
+            fill = BmpTheme.tints.lemon.fill,
+            contentColor = BmpTheme.tints.lemon.glyph,
+            size = PlateSize.small,
+        )
+        Spacer(Modifier.width(Space.xs))
+        Text(
+            text = deviceName,
+            style = MaterialTheme.typography.titleLarge.copy(
+                fontSize = HEADER_NAME,
+                lineHeight = HEADER_NAME_LINE,
+            ),
+            fontWeight = FontWeight.Bold,
+            color = MaterialTheme.colorScheme.onSurface,
+            maxLines = 1,
+            modifier = Modifier.weight(1f),
+        )
+        TextButton(
+            onClick = onAction,
+            // Blueberry, not marigold. Marigold means live and healthy; a header action is
+            // neither, and the default TextButton reaches for `primary` on its own.
+            colors = ButtonDefaults.textButtonColors(
+                contentColor = MaterialTheme.colorScheme.secondary,
+            ),
+        ) {
             Text(
-                text = deviceName,
-                style = MaterialTheme.typography.titleLarge,
-                fontWeight = FontWeight.SemiBold,
-                color = MaterialTheme.colorScheme.onBackground,
-                maxLines = 1,
+                text = actionLabel,
+                style = MaterialTheme.typography.labelLarge.copy(fontSize = ACTION_TEXT),
+                fontWeight = FontWeight.Bold,
             )
-            // The privacy promise as telemetry rather than prose, in the same slot on every
-            // screen: this address, on your network, right now. A parent can check it
-            // against their own router, which is not true of a paragraph.
-            PrivacyLine(address)
         }
-        TextButton(onClick = onAction) { Text(actionLabel) }
+        // Beside the existing action rather than buried in Settings: the room goes dark
+        // while the parent is standing in it, which is the moment they need this, and it is
+        // not the moment to go looking for a settings screen.
+        MoonButton(night = night, onNightChanged = onNightChanged)
     }
 }
 
@@ -304,7 +341,11 @@ private fun PreviewBlock(
                 // this exists to handle. A phone held upright streams upright, uncropped.
                 .aspectRatio(aspect, matchHeightConstraintsFirst = aspect < 1f)
                 .clip(MaterialTheme.shapes.large)
-                .background(MaterialTheme.colorScheme.surface),
+                .border(CARD_BORDER, MaterialTheme.colorScheme.outlineVariant, MaterialTheme.shapes.large)
+                // The only dark surface on a day screen, and deliberately so: a nursery at
+                // night is dark, and a picture of it letterboxed onto white would put more
+                // light on the parent's face than the picture itself carries information.
+                .background(PREVIEW_GROUND),
             contentAlignment = Alignment.Center,
         ) {
             // The same frames the viewers receive, so what the parent sees here is exactly
@@ -329,7 +370,7 @@ private fun PreviewBlock(
                         Text(
                             text = prose,
                             style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            color = PREVIEW_GROUND_TEXT,
                             textAlign = TextAlign.Center,
                             modifier = Modifier.padding(horizontal = Space.xl),
                         )
@@ -369,6 +410,42 @@ private fun PreviewBlock(
     if (window.atLeastMedium) Spacer(Modifier.height(Space.xs))
 }
 
+/**
+ * The standing offer to grant camera and microphone access.
+ *
+ * Only once the system has actually answered, so it does not flash up underneath its own
+ * dialog. Which of the two is missing decides the sentence, because "we need the camera" is
+ * a lie on a device that has the camera and not the microphone — and a parent who is told
+ * the wrong thing goes looking in the wrong place.
+ */
+@Composable
+private fun CapturePermissionNotice(permissions: CapturePermissions) {
+    if (!permissions.resolved || !permissions.needsRequest) return
+
+    val explanation = when {
+        !permissions.cameraGranted && !permissions.microphoneGranted ->
+            "This device is the camera, so it needs the camera and the microphone to send " +
+                "video and sound to your other devices. Nothing is recorded and nothing " +
+                "leaves your WiFi."
+        !permissions.cameraGranted ->
+            "Sound is going out, but there is no picture without camera access. Nothing is " +
+                "recorded and nothing leaves your WiFi."
+        else ->
+            "There is a picture, but no sound without microphone access — and on Android 14 " +
+                "and later, capture stops altogether when the screen goes off without it."
+    }
+
+    Spacer(Modifier.height(Space.sm))
+    PermissionNotice(
+        icon = BmpIcons.Camera,
+        title = if (permissions.blocked) "Turn access back on" else "Allow camera and sound",
+        explanation = explanation,
+        blocked = permissions.blocked,
+        onRequest = permissions::request,
+        onOpenSettings = permissions::openSettings,
+    )
+}
+
 @Composable
 private fun AdvisoryBlock(
     available: Boolean,
@@ -381,8 +458,15 @@ private fun AdvisoryBlock(
     val advice = when {
         !available -> "This device cannot broadcast."
         !resolved -> null
-        !cameraGranted ->
-            "Camera access is off. Sound is still going out. Turn video back on in Settings."
+        // The notice above is already saying this, with a button attached and without
+        // guessing which half is missing. This line used to promise that "sound is still
+        // going out" whenever the camera was off, which is a lie on a device where the
+        // parent refused both — and it is the reassuring half of the sentence, so it is
+        // the half they remember.
+        !cameraGranted -> null
+        // Only a real one. With the camera merely refused the test pattern is a permission
+        // problem wearing a hardware problem's clothes, and sending a parent looking for a
+        // broken lens is worse than saying nothing.
         state.syntheticVideo ->
             "This device has no working camera. Viewers get a test pattern, so sound and " +
                 "pairing can still be checked."
@@ -452,7 +536,10 @@ private fun PairCard(state: BroadcastState, window: WindowClass) {
         copied = false
     }
 
-    SectionCard(title = "Pair another device") {
+    SectionCard(
+        title = "Pair another device",
+        icon = BmpIcons.Footprint,
+    ) {
         if (address == null) {
             Text(
                 // Two different silences. With the port taken there is nothing to wait for
@@ -473,39 +560,84 @@ private fun PairCard(state: BroadcastState, window: WindowClass) {
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            MonoValue(
-                text = pairing,
+            Text(
+                // The port is set back rather than hidden. It is almost always 8080 and
+                // almost never the part that matters, but a parent reading the address
+                // aloud across a landing needs it there when it is not.
+                text = buildAnnotatedString {
+                    append(address)
+                    withStyle(SpanStyle(color = MaterialTheme.colorScheme.onSurfaceVariant)) {
+                        append(":${state.port}")
+                    }
+                },
+                style = MaterialTheme.typography.titleLarge.copy(
+                    fontFamily = FontFamily.Monospace,
+                    fontSize = ADDRESS_TEXT,
+                ),
+                fontWeight = FontWeight.Bold,
                 color = MaterialTheme.colorScheme.onSurface,
+                maxLines = 1,
+                softWrap = false,
                 modifier = Modifier.weight(1f),
             )
             // Reading an address off one phone and typing it into another is the fallback
             // when the camera sits somewhere a code cannot be scanned.
-            TextButton(onClick = {
-                clipboard.setText(AnnotatedString(pairing))
-                copied = true
-            }) {
-                Text(if (copied) "Copied" else "Copy")
+            TextButton(
+                onClick = {
+                    clipboard.setText(AnnotatedString(pairing))
+                    copied = true
+                },
+                colors = ButtonDefaults.textButtonColors(
+                    contentColor = MaterialTheme.colorScheme.secondary,
+                ),
+            ) {
+                Text(
+                    text = if (copied) "Copied" else "Copy",
+                    style = MaterialTheme.typography.labelLarge.copy(fontSize = ACTION_TEXT),
+                    fontWeight = FontWeight.Bold,
+                )
             }
         }
 
-        Spacer(Modifier.height(Space.sm))
+        // A hairline, not a gap. The address and the code are two ways of handing over the
+        // same string, and the rule is what says so.
+        Spacer(Modifier.height(DIVIDER_GAP))
+        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+        Spacer(Modifier.height(DIVIDER_GAP))
 
-        val scanHint = "Scan this from the other device, or type the address in by hand. " +
-            "Encodes bmpro:// — no internet lookup."
+        val scanHint = "Scan this from the other device, or type the address above."
         // Named, not nagged about: anyone on this WiFi who has the address can watch.
         val reachHint = "Anyone on this WiFi who knows the address can watch."
 
         if (window.isCompact) {
-            // A phone has no width to spare, so the code takes most of it and the prose sits
-            // underneath.
-            QrCode(
-                content = PairingUri.build(address, state.port),
-                modifier = Modifier.fillMaxWidth(0.62f).aspectRatio(1f),
+            // 96dp and no larger. A code only has to be big enough for the other phone held
+            // beside it, and the width it does not take is the width the prose needs — a
+            // code across most of the card left the sentence explaining it in a column two
+            // words wide.
+            Row(horizontalArrangement = Arrangement.spacedBy(Space.md)) {
+                QrCode(
+                    content = PairingUri.build(address, state.port),
+                    modifier = Modifier.size(PHONE_QR_SIZE),
+                )
+                Text(
+                    text = scanHint,
+                    style = MaterialTheme.typography.bodySmall.copy(
+                        fontSize = HINT_TEXT,
+                        lineHeight = HINT_LINE,
+                    ),
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.weight(1f),
+                )
+            }
+            Spacer(Modifier.height(Space.sm))
+            Text(
+                text = reachHint,
+                style = MaterialTheme.typography.bodySmall.copy(
+                    fontSize = HINT_TEXT,
+                    lineHeight = HINT_LINE,
+                ),
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
-            Spacer(Modifier.height(Space.xs))
-            Text(scanHint, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            Spacer(Modifier.height(Space.md))
-            Text(reachHint, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         } else {
             // On a tablet the code is a fixed 150dp — sized to be scanned from across the
             // room, which is the whole reason the QR route exists, and not one pixel more.
@@ -545,7 +677,21 @@ private fun broadcastStatus(
     else -> "Starting" to StatusTone.WAITING
 }
 
-private const val DIM_SETTLE_MILLIS = 6000L
+private val HEADER_NAME = 20.sp
+private val HEADER_NAME_LINE = 24.sp
+private val ACTION_TEXT = 13.sp
+private val ADDRESS_TEXT = 23.sp
+private val HINT_TEXT = 12.5.sp
+private val HINT_LINE = 19.sp
+private val DIVIDER_GAP = 14.dp
+private val PHONE_QR_SIZE = 96.dp
+
+/** The picture's ground, and the only dark surface the day scheme has. */
+private val PREVIEW_GROUND = Color(0xFF17181F)
+
+/** Prose printed on that ground — cream, held back so it reads as chrome, not content. */
+private val PREVIEW_GROUND_TEXT = Color(0xFFB8B2A8)
+
 private const val COPIED_VISIBLE_MILLIS = 1600L
 private const val DEFAULT_PREVIEW_ASPECT = 16f / 9f
 private val RAIL_WIDTH = 420.dp

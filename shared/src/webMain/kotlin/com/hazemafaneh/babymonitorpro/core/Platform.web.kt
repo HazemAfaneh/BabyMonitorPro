@@ -8,3 +8,6 @@ actual fun defaultDeviceName(): String = "Browser"
 actual val supportsCameraRole: Boolean = false
 
 actual val supportsNotifications: Boolean = false
+
+/** A TV browser is possible, but nothing here can tell one from a small laptop. */
+actual val isTelevision: Boolean = false

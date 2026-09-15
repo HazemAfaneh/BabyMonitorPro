@@ -1,6 +1,8 @@
 package com.hazemafaneh.babymonitorpro.ui.video
 
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -8,9 +10,11 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.onSizeChanged
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.withContext
@@ -58,6 +62,10 @@ internal fun JpegFrameView(
 ) {
     var frame by remember(frames) { mutableStateOf<ImageBitmap?>(null) }
     val reportAspect by rememberUpdatedState(onAspectRatio)
+    // How wide the box actually is, in pixels, so the decoder can stop at that width. A
+    // plain var read from the collector rather than state: it changes on layout, not per
+    // frame, and the frame after a resize picking it up is soon enough.
+    var boxWidthPx by remember(frames) { mutableStateOf(0) }
 
     LaunchedEffect(frames) {
         val source = frames ?: return@LaunchedEffect
@@ -67,7 +75,12 @@ internal fun JpegFrameView(
         // The source drops frames for a slow collector rather than queueing them, so a
         // decode that cannot keep up falls behind in rate, never in time.
         source.collect { jpeg ->
-            val decoded = withContext(Dispatchers.Default) { decodeJpegFrame(jpeg) } ?: return@collect
+            // This is the third decode of a frame the camera device has already encoded and
+            // motion-checked, and it is for a thumbnail. Bounding it to the box turns a
+            // 720p decode into whatever fraction the box actually needs.
+            val bound = boxWidthPx
+            val decoded = withContext(Dispatchers.Default) { decodeJpegFrame(jpeg, bound) }
+                ?: return@collect
             frame = decoded
             val aspect = if (decoded.height > 0) decoded.width.toFloat() / decoded.height else 0f
             if (aspect > 0f && aspect != lastAspect) {
@@ -81,14 +94,19 @@ internal fun JpegFrameView(
     // pausing is not the same as it never having started, and a preview that blanks itself
     // looks like a fault.
     val bitmap = frame
-    if (bitmap == null) {
-        placeholder()
-    } else {
-        Image(
-            bitmap = bitmap,
-            contentDescription = contentDescription,
-            modifier = modifier,
-            contentScale = contentScale,
-        )
+    Box(
+        modifier = modifier.onSizeChanged { boxWidthPx = it.width },
+        contentAlignment = Alignment.Center,
+    ) {
+        if (bitmap == null) {
+            placeholder()
+        } else {
+            Image(
+                bitmap = bitmap,
+                contentDescription = contentDescription,
+                modifier = Modifier.fillMaxSize(),
+                contentScale = contentScale,
+            )
+        }
     }
 }

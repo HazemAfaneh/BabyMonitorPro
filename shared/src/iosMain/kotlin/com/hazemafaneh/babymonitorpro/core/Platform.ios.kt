@@ -9,3 +9,6 @@ actual fun defaultDeviceName(): String = UIDevice.currentDevice.name
 actual val supportsCameraRole: Boolean = true
 
 actual val supportsNotifications: Boolean = true
+
+/** tvOS is not a target; every iOS device this runs on is handheld. */
+actual val isTelevision: Boolean = false

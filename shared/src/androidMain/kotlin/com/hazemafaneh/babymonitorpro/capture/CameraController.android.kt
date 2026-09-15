@@ -65,6 +65,15 @@ actual class CameraController actual constructor(private val config: CaptureConf
         if (config.useFrontCamera) CameraSelector.LENS_FACING_FRONT else CameraSelector.LENS_FACING_BACK
     private var lastEmittedAt = 0L
 
+    /**
+     * Same slack iOS applies, for the same reason. CameraX delivers on the sensor's clock,
+     * not ours, and a frame that lands a millisecond inside the exact interval is thrown
+     * away — at a 30 fps sensor and a 12 fps target that is every third frame skipped
+     * *and* the one after it, which came out at 10 fps. A quarter interval absorbs the
+     * jitter without letting a genuinely early frame through.
+     */
+    private val minEmitIntervalMs = config.frameIntervalMs - config.frameIntervalMs / 4
+
     actual val frames: Flow<ByteArray> = frameFlow.asSharedFlow()
 
     /**
@@ -179,7 +188,7 @@ actual class CameraController actual constructor(private val config: CaptureConf
     private fun onImage(image: ImageProxy) {
         try {
             val now = nowMillis()
-            if (now - lastEmittedAt < config.frameIntervalMs) return
+            if (now - lastEmittedAt < minEmitIntervalMs) return
             lastEmittedAt = now
 
             val bitmap = image.toBitmap().rotated(image.imageInfo.rotationDegrees)

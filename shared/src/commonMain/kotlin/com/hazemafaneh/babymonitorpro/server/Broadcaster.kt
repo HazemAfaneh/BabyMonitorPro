@@ -76,6 +76,18 @@ interface Broadcaster {
     /** Motion/sound events raised locally, mirrored to viewers over `/control`. */
     val events: Flow<ControlMessage>
 
+    /**
+     * Normalised RMS of the most recent audio chunk, 0..1 — what the room sounds like right
+     * now, whether or not it was loud enough to raise an alert.
+     *
+     * Separate from [state] rather than a field on it: this changes with every audio chunk,
+     * and folding it into the broadcast state would recompose the whole camera screen at
+     * audio rate to move fourteen bars. It is the same value [events] already reports on a
+     * sound alert, published continuously instead of only when it crosses the threshold —
+     * no new capture path, and nothing extra computed.
+     */
+    val soundLevel: StateFlow<Float>
+
     suspend fun start(config: BroadcastConfig)
     suspend fun stop()
 

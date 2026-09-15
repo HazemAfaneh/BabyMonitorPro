@@ -93,11 +93,14 @@ internal fun MjpegFrameLoop(
                 onError(cause?.message ?: cause?.toString() ?: "Unknown error")
             }
             attempt++
-            // A camera device gets carried around; reconnect quietly rather than
-            // dumping the parent back to the device list. Two seconds, because the
-            // reconnecting copy tells the parent that is the interval — a cadence the
-            // screen states out loud is one the loop has to keep.
-            delay(RECONNECT_DELAY_MILLIS)
+            // Backed off, rather than a flat two seconds every time.
+            //
+            // Most reconnects are a blink — a dropped frame boundary, a phone switching
+            // access point — and a fixed two-second wait turned every one of them into two
+            // seconds of stale picture. The first retry is now almost immediate, and only a
+            // camera that keeps refusing earns the longer waits, which is the case where
+            // hammering it helps nobody.
+            delay(reconnectDelay(attempt))
         }
     }
 }
@@ -106,13 +109,20 @@ internal fun MjpegFrameLoop(
 actual val videoRendersBehindUi: Boolean = false
 
 internal class StalledStreamException : Exception(
-    "Connected, but the camera sent no video. Check the camera screen is still open.",
+    "Connected, but the nursery device sent no video. Check the camera screen is still open there.",
 )
 
 internal class UndecodableStreamException(received: Int) : Exception(
-    "Received $received frames from the camera but none could be decoded.",
+    "Received $received frames from the nursery device, but none could be decoded.",
 )
 
-private const val RECONNECT_DELAY_MILLIS = 2000L
+/** 250ms, 500, 1000, 2000, then a flat 3s ceiling. */
+private fun reconnectDelay(attempt: Int): Long {
+    val backoff = FIRST_RECONNECT_MILLIS shl (attempt - 1).coerceIn(0, 4)
+    return backoff.coerceAtMost(MAX_RECONNECT_MILLIS)
+}
+
+private const val FIRST_RECONNECT_MILLIS = 250L
+private const val MAX_RECONNECT_MILLIS = 3000L
 private const val STALL_CHECK_MILLIS = 1000L
 private const val STALL_TIMEOUT_MILLIS = 8000L

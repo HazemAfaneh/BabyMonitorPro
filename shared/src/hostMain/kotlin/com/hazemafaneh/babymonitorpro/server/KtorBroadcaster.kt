@@ -26,6 +26,7 @@ import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.delay
@@ -63,6 +64,8 @@ class KtorBroadcaster : Broadcaster {
     private val advertiser = createAdvertiser()
     private val motionDetector = MotionDetector()
     private val soundDetector = SoundDetector()
+    private val _soundLevel = MutableStateFlow(0f)
+    override val soundLevel: StateFlow<Float> = _soundLevel
     private var videoJob: Job? = null
     private var audioJob: Job? = null
     private var startedAt: Long = 0
@@ -187,6 +190,9 @@ class KtorBroadcaster : Broadcaster {
      * the pipeline down and then publish a fault instead of a blank slate.
      */
     private suspend fun teardown() {
+        // A meter left holding the last level a stopped microphone heard is a meter that
+        // says the room is noisy when nothing is listening to it.
+        _soundLevel.value = 0f
         videoJob?.cancelAndJoin()
         audioJob?.cancelAndJoin()
         videoJob = null
@@ -272,7 +278,12 @@ class KtorBroadcaster : Broadcaster {
     }
 
     private fun inspectForSound(pcm: ByteArray) {
-        if (soundDetector.submit(pcm, nowMillis())) {
+        val fired = soundDetector.submit(pcm, nowMillis())
+        // Published on every chunk, not only on a firing one: the meter's job is to show the
+        // parent what the room sounds like while they set the threshold against it, which is
+        // precisely the levels that did *not* raise an alert.
+        _soundLevel.value = soundDetector.lastLevel
+        if (fired) {
             eventFlow.tryEmit(
                 ControlMessage.SoundEvent(
                     atMillis = nowMillis(),
