@@ -5,13 +5,15 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.safeContentPadding
+import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -63,12 +65,11 @@ fun RolePickerScreen(
         modifier = Modifier
             .fillMaxSize()
             .background(MaterialTheme.colorScheme.background)
-            .safeContentPadding()
+            .safeDrawingPadding()
             // Its own gutter rather than the window's. This screen is a centred column of
             // two cards with nothing beside them, so it can afford the wider inset that
             // would cost the camera screen part of its picture.
-            .padding(horizontal = Space.xl)
-            .padding(bottom = BOTTOM_PADDING),
+            .padding(horizontal = Space.xl),
         verticalArrangement = Arrangement.Center,
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
@@ -164,6 +165,7 @@ fun RolePickerScreen(
     }
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun RoleCard(
     icon: ImageVector,
@@ -185,21 +187,25 @@ private fun RoleCard(
         border = BorderStroke(CARD_BORDER, tint.border),
     ) {
         Column(Modifier.padding(horizontal = Space.xl, vertical = CARD_PADDING_VERTICAL)) {
-            Row(
-                Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.Top,
-            ) {
-                Row(Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically) {
-                    // White, so the glyph reads as sitting on the card rather than being
-                    // printed into it.
-                    IconPlate(
-                        icon = icon,
-                        fill = MaterialTheme.colorScheme.surface,
-                        contentColor = tint.glyph,
-                        size = PlateSize.medium,
-                    )
-                    Spacer(Modifier.width(Space.sm))
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                // White, so the glyph reads as sitting on the card rather than being
+                // printed into it.
+                IconPlate(
+                    icon = icon,
+                    fill = MaterialTheme.colorScheme.surface,
+                    contentColor = tint.glyph,
+                    size = PlateSize.medium,
+                )
+                Spacer(Modifier.width(Space.sm))
+                // A flow, not a row: the title keeps the full column width and the badge
+                // sits beside it only when it fits, otherwise it drops beneath. A row gave
+                // the badge its width first and left the title breaking mid-word.
+                FlowRow(
+                    modifier = Modifier.weight(1f),
+                    horizontalArrangement = Arrangement.spacedBy(Space.sm),
+                    verticalArrangement = Arrangement.spacedBy(Space.xxs),
+                    itemVerticalAlignment = Alignment.CenterVertically,
+                ) {
                     Text(
                         text = title,
                         style = MaterialTheme.typography.titleLarge.copy(
@@ -209,12 +215,9 @@ private fun RoleCard(
                         fontWeight = FontWeight.Bold,
                         color = tint.content,
                     )
-                }
-                // A labelled badge rather than a coloured dot. "Last used" is what the dot
-                // was trying to say, and saying it costs one word.
-                if (highlighted) {
-                    Spacer(Modifier.width(Space.sm))
-                    LastUsedBadge()
+                    // A labelled badge rather than a coloured dot. "Last used" is what the
+                    // dot was trying to say, and saying it costs one word.
+                    if (highlighted) LastUsedBadge()
                 }
             }
             Spacer(Modifier.height(DESCRIPTION_GAP))
@@ -257,9 +260,6 @@ private val CARD_BORDER = 1.5.dp
 private val CARD_PADDING_VERTICAL = 22.dp
 private val DESCRIPTION_GAP = 10.dp
 private val BADGE_RADIUS = 7.dp
-
-/** Clears the home indicator without the content sitting on it. */
-private val BOTTOM_PADDING = 34.dp
 
 /** Keeps the cards a readable width on a desktop window rather than stretching them. */
 private val CONTENT_MAX_WIDTH = 520.dp

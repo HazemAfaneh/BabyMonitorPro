@@ -21,7 +21,26 @@ interface CapturePermissions {
      */
     val resolved: Boolean get() = true
 
+    /**
+     * Refused, and the system will not show the dialog again.
+     *
+     * The distinction matters because it decides what the screen can offer. While this is
+     * false the honest button is "Allow", and tapping it puts the system dialog up. Once it
+     * is true that button does nothing at all — Android returns the denial without drawing
+     * anything — so the only truthful offer left is a trip to Settings.
+     */
+    val blocked: Boolean get() = false
+
+    /**
+     * Ask, or ask again.
+     *
+     * Safe to call repeatedly. Where the system has stopped answering, the screen should
+     * be sending the parent to [openSettings] instead.
+     */
     fun request()
+
+    /** This app's page in the OS settings. A no-op where the platform has nowhere to go. */
+    fun openSettings() = Unit
 }
 
 @Composable

@@ -13,7 +13,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.safeContentPadding
+import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
@@ -60,6 +60,8 @@ import com.hazemafaneh.babymonitorpro.ui.layout.WindowClass
 import com.hazemafaneh.babymonitorpro.ui.layout.gutter
 import com.hazemafaneh.babymonitorpro.ui.layout.rememberWindowClass
 import com.hazemafaneh.babymonitorpro.ui.layout.windowHeight
+import com.hazemafaneh.babymonitorpro.ui.CapturePermissions
+import com.hazemafaneh.babymonitorpro.ui.components.PermissionNotice
 import com.hazemafaneh.babymonitorpro.ui.rememberCapturePermissions
 import com.hazemafaneh.babymonitorpro.ui.components.MoonButton
 import com.hazemafaneh.babymonitorpro.ui.components.OverlayPill
@@ -119,7 +121,13 @@ fun CameraScreen(
     // Both, not just the camera: on Android 14+ a foreground service that claims the
     // microphone type without RECORD_AUDIO granted is killed by the system, and the HTTP
     // server dies with the process.
-    LaunchedEffect(permissions.needsRequest) {
+    // Once, on arrival — not on every change of [needsRequest].
+    //
+    // Keyed on the flag, this effect re-ran itself into a corner: the parent taps Deny, the
+    // flag never changes, and nothing ever asks again. The dialog raised here is the
+    // opening offer, and [CapturePermissionNotice] below is the standing one, so a refusal
+    // now costs the parent a tap rather than the feature.
+    LaunchedEffect(Unit) {
         if (permissions.needsRequest) permissions.request()
     }
 
@@ -152,7 +160,7 @@ fun CameraScreen(
         modifier = Modifier
             .fillMaxSize()
             .background(MaterialTheme.colorScheme.background)
-            .safeContentPadding(),
+            .safeDrawingPadding(),
     ) {
         CameraHeader(
             deviceName = deviceName,
@@ -192,6 +200,7 @@ fun CameraScreen(
                         // column empty and the picture smaller than the card beside it.
                         modifier = Modifier.weight(1f),
                     )
+                    CapturePermissionNotice(permissions)
                     AdvisoryBlock(broadcaster != null, permissions.resolved, permissions.cameraGranted, state)
                 }
                 Column(Modifier.width(RAIL_WIDTH).fillMaxHeight()) {
@@ -215,6 +224,7 @@ fun CameraScreen(
                     .padding(horizontal = window.gutter()),
             ) {
                 PreviewBlock(broadcaster?.frames, state, broadcaster != null, permissions.resolved, permissions.cameraGranted, window)
+                CapturePermissionNotice(permissions)
                 AdvisoryBlock(broadcaster != null, permissions.resolved, permissions.cameraGranted, state)
                 Spacer(Modifier.height(Space.sm))
                 PortConflictBanner(state, broadcaster)
@@ -395,6 +405,42 @@ private fun PreviewBlock(
     if (window.atLeastMedium) Spacer(Modifier.height(Space.xs))
 }
 
+/**
+ * The standing offer to grant camera and microphone access.
+ *
+ * Only once the system has actually answered, so it does not flash up underneath its own
+ * dialog. Which of the two is missing decides the sentence, because "we need the camera" is
+ * a lie on a device that has the camera and not the microphone — and a parent who is told
+ * the wrong thing goes looking in the wrong place.
+ */
+@Composable
+private fun CapturePermissionNotice(permissions: CapturePermissions) {
+    if (!permissions.resolved || !permissions.needsRequest) return
+
+    val explanation = when {
+        !permissions.cameraGranted && !permissions.microphoneGranted ->
+            "This device is the camera, so it needs the camera and the microphone to send " +
+                "video and sound to your other devices. Nothing is recorded and nothing " +
+                "leaves your WiFi."
+        !permissions.cameraGranted ->
+            "Sound is going out, but there is no picture without camera access. Nothing is " +
+                "recorded and nothing leaves your WiFi."
+        else ->
+            "There is a picture, but no sound without microphone access — and on Android 14 " +
+                "and later, capture stops altogether when the screen goes off without it."
+    }
+
+    Spacer(Modifier.height(Space.sm))
+    PermissionNotice(
+        icon = BmpIcons.Camera,
+        title = if (permissions.blocked) "Turn access back on" else "Allow camera and sound",
+        explanation = explanation,
+        blocked = permissions.blocked,
+        onRequest = permissions::request,
+        onOpenSettings = permissions::openSettings,
+    )
+}
+
 @Composable
 private fun AdvisoryBlock(
     available: Boolean,
@@ -407,8 +453,15 @@ private fun AdvisoryBlock(
     val advice = when {
         !available -> "This device cannot broadcast."
         !resolved -> null
-        !cameraGranted ->
-            "Camera access is off. Sound is still going out. Turn video back on in Settings."
+        // The notice above is already saying this, with a button attached and without
+        // guessing which half is missing. This line used to promise that "sound is still
+        // going out" whenever the camera was off, which is a lie on a device where the
+        // parent refused both — and it is the reassuring half of the sentence, so it is
+        // the half they remember.
+        !cameraGranted -> null
+        // Only a real one. With the camera merely refused the test pattern is a permission
+        // problem wearing a hardware problem's clothes, and sending a parent looking for a
+        // broken lens is worse than saying nothing.
         state.syntheticVideo ->
             "This device has no working camera. Viewers get a test pattern, so sound and " +
                 "pairing can still be checked."

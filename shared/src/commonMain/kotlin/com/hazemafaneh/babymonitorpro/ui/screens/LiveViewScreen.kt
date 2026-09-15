@@ -19,7 +19,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.safeContentPadding
+import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
@@ -493,7 +493,7 @@ private fun LivePane(
                     alert = alert,
                     onDismiss = onDismissAlert,
                     modifier = Modifier
-                        .safeContentPadding()
+                        .safeDrawingPadding()
                         .padding(top = BANNER_TOP, start = CHROME_INSET, end = CHROME_INSET),
                 )
             }
@@ -507,7 +507,7 @@ private fun LivePane(
                 tone = statusTone,
                 modifier = Modifier
                     .align(Alignment.TopStart)
-                    .safeContentPadding()
+                    .safeDrawingPadding()
                     .padding(Space.md),
             )
         }
@@ -516,7 +516,7 @@ private fun LivePane(
             Surface(
                 modifier = Modifier
                     .align(Alignment.BottomCenter)
-                    .safeContentPadding()
+                    .safeDrawingPadding()
                     .padding(bottom = 104.dp, start = Space.md, end = Space.md),
                 color = MaterialTheme.colorScheme.surface.copy(alpha = 0.85f),
                 shape = MaterialTheme.shapes.large,
@@ -576,7 +576,7 @@ private fun TopChrome(
     Row(
         Modifier
             .fillMaxWidth()
-            .safeContentPadding()
+            .safeDrawingPadding()
             // Held off the *screen* edges, not the picture's. Portrait and landscape frames
             // then share one layout, and neither crops the chrome off with the frame.
             .padding(horizontal = CHROME_INSET, vertical = Space.xxs),
@@ -710,7 +710,7 @@ private fun BottomBar(
 ) {
     Surface(
         modifier = Modifier
-            .safeContentPadding()
+            .safeDrawingPadding()
             .padding(horizontal = CHROME_INSET)
             .padding(bottom = BAR_BOTTOM)
             .then(if (fullWidth) Modifier.fillMaxWidth() else Modifier)
@@ -868,7 +868,7 @@ private fun SideRail(
             .fillMaxHeight()
             .background(MaterialTheme.colorScheme.background)
             .border(CARD_BORDER, MaterialTheme.colorScheme.outlineVariant)
-            .safeContentPadding()
+            .safeDrawingPadding()
             .padding(horizontal = Space.xl, vertical = RAIL_V_PADDING),
     ) {
         Row(
