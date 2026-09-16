@@ -54,7 +54,7 @@ class ViewerClient(
      * closes it. Web viewers use an `<img>` element instead — a browser decodes
      * `multipart/x-mixed-replace` natively and far more cheaply.
      */
-    fun streamFrames(): Flow<ByteArray> = channelFlow {
+    fun streamFrames(maxFps: Int? = null): Flow<ByteArray> = channelFlow {
         // channelFlow, not flow: `execute` runs its block in the engine's own context, and
         // on Darwin that is a different dispatcher from the collector's. A bare flow{} then
         // fails every single read with "Flow invariant is violated", which the viewer's
@@ -64,7 +64,14 @@ class ViewerClient(
         // UPGRADE PATH: a WebRTC PeerConnection would be established here, replacing the
         // multipart read loop; everything downstream still just sees decoded frames.
         val parser = MjpegParser(Bmp.MJPEG_BOUNDARY)
-        client.prepareGet("${endpoint.baseUrl}${Bmp.PATH_STREAM}").execute { response ->
+        // The camera drops frames for us rather than us throwing them away after they have
+        // already crossed the network, which is the entire point when the network is a
+        // mobile data plan.
+        val url = buildString {
+            append(endpoint.baseUrl).append(Bmp.PATH_STREAM)
+            if (maxFps != null) append('?').append(Bmp.QUERY_FPS).append('=').append(maxFps)
+        }
+        client.prepareGet(url).execute { response ->
             // Without this the viewer sits on an error body forever: no boundary ever
             // arrives, so the parser yields no frames and the screen stays black with no
             // explanation.

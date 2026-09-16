@@ -1,5 +1,8 @@
 package com.hazemafaneh.babymonitorpro.notify
 
+import com.hazemafaneh.babymonitorpro.detect.MotionDetector
+import com.hazemafaneh.babymonitorpro.detect.SoundDetector
+
 /** Which detector fired. The two are never phrased alike — see [CameraAlert.headline]. */
 enum class AlertKind { MOTION, SOUND }
 
@@ -47,28 +50,44 @@ data class CameraAlert(
     val detail: String
         get() = when (kind) {
             AlertKind.MOTION -> when {
-                magnitude >= MOTION_STRONG -> "A lot of movement"
-                magnitude >= MOTION_MODERATE -> "Steady movement"
+                percent >= VERY_HIGH -> "A lot of movement"
+                percent >= HIGH -> "Plenty of movement"
+                percent >= MIDDLING -> "Some movement"
                 else -> "Slight movement"
             }
             AlertKind.SOUND -> when {
-                magnitude >= SOUND_LOUD -> "Loud — crying or a shout"
-                magnitude >= SOUND_MODERATE -> "Clearly audible"
+                percent >= VERY_HIGH -> "Loud — crying or a shout"
+                percent >= HIGH -> "Clearly audible"
+                percent >= MIDDLING -> "Quiet but there"
                 else -> "Faint — a murmur or a rustle"
             }
+        }
+
+    /**
+     * The reading on the 0..100 scale the sliders use, where bigger is louder or busier.
+     *
+     * The bands used to sit on the raw magnitude, and the raw magnitude is not where the
+     * events are: a sound alert fires at around 0.03–0.1 RMS, well under the 0.25 the "loud"
+     * band wanted, so **every** sound alert read "Faint" — and a motion alert cannot fire
+     * below its threshold, which at the default is already past the "a lot" band, so **every**
+     * movement alert read "A lot of movement". Two labels doing no work at all.
+     *
+     * Banding the normalised figure instead means the words move with the room, and they are
+     * the same numbers the parent set the threshold against.
+     */
+    val percent: Float
+        get() = when (kind) {
+            AlertKind.MOTION -> MotionDetector.levelPercent(magnitude)
+            AlertKind.SOUND -> SoundDetector.levelPercent(magnitude)
         }
 
     /** Headline and detail as one line, for surfaces that only have one. */
     val oneLine: String get() = "$headline · $detail"
 
     private companion object {
-        // Motion fires between 0.005 and 0.20 of the frame depending on sensitivity, so the
-        // bands sit inside that range rather than spanning 0..1.
-        const val MOTION_STRONG = 0.12f
-        const val MOTION_MODERATE = 0.04f
-
-        // Sound fires between 0.01 and 0.35 RMS for the same reason.
-        const val SOUND_LOUD = 0.25f
-        const val SOUND_MODERATE = 0.08f
+        // Quarters of the scale both detectors are now expressed on.
+        const val VERY_HIGH = 75f
+        const val HIGH = 55f
+        const val MIDDLING = 35f
     }
 }

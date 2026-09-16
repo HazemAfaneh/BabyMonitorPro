@@ -3,6 +3,7 @@ package com.hazemafaneh.babymonitorpro.di
 import com.hazemafaneh.babymonitorpro.server.Broadcaster
 import com.hazemafaneh.babymonitorpro.server.createBroadcaster
 import com.hazemafaneh.babymonitorpro.store.AppSettings
+import com.hazemafaneh.babymonitorpro.store.applyRemote
 import com.hazemafaneh.babymonitorpro.store.KeyValueStore
 import com.hazemafaneh.babymonitorpro.store.createKeyValueStore
 import org.koin.dsl.module
@@ -18,7 +19,15 @@ val appModule = module {
     // different instances: the settings screen would then drive a broadcaster that owns no
     // camera and no socket, and restarting it would collide with the real one on port 8080.
     // Named so the null on web stays expressible.
-    single<BroadcasterHolder> { BroadcasterHolder(createBroadcaster()) }
+    single<BroadcasterHolder> {
+        val settings = get<AppSettings>()
+        val broadcaster = createBroadcaster()?.apply {
+            // A viewer changing this camera's settings writes them to this device, exactly as
+            // if someone had walked in and changed them on the nursery phone itself.
+            onRemoteSettings = { change -> settings.applyRemote(change) }
+        }
+        BroadcasterHolder(broadcaster)
+    }
 }
 
 /**

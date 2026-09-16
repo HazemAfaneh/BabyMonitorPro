@@ -34,7 +34,9 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -45,24 +47,36 @@ import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.hazemafaneh.babymonitorpro.core.BackgroundAccess
+import com.hazemafaneh.babymonitorpro.core.isTelevision
 import com.hazemafaneh.babymonitorpro.core.supportsCameraRole
 import com.hazemafaneh.babymonitorpro.core.supportsNotifications
 import com.hazemafaneh.babymonitorpro.detect.MotionDetector
+import com.hazemafaneh.babymonitorpro.detect.SoundDetector
 import com.hazemafaneh.babymonitorpro.di.BroadcasterHolder
 import com.hazemafaneh.babymonitorpro.server.BroadcastState
 import com.hazemafaneh.babymonitorpro.store.AppSettings
+import com.hazemafaneh.babymonitorpro.store.DATA_SAVER_CHOICES
 import com.hazemafaneh.babymonitorpro.store.FRAME_RATES
 import com.hazemafaneh.babymonitorpro.store.ListenOnAlert
+import com.hazemafaneh.babymonitorpro.store.StartupRole
 import com.hazemafaneh.babymonitorpro.store.VIDEO_HEIGHTS
 import com.hazemafaneh.babymonitorpro.ui.components.CARD_BORDER
 import com.hazemafaneh.babymonitorpro.ui.components.IconPlate
 import com.hazemafaneh.babymonitorpro.ui.components.MoonButton
 import com.hazemafaneh.babymonitorpro.ui.components.PlateSize
 import com.hazemafaneh.babymonitorpro.ui.components.SectionCard
+import com.hazemafaneh.babymonitorpro.ui.components.MotionLevelMarker
+import com.hazemafaneh.babymonitorpro.ui.components.motionLevelPercent
+import com.hazemafaneh.babymonitorpro.ui.components.sensitivityForThreshold
+import com.hazemafaneh.babymonitorpro.ui.components.soundLevelPercent
+import com.hazemafaneh.babymonitorpro.ui.components.thresholdForSensitivity
+import com.hazemafaneh.babymonitorpro.ui.components.SoundLevelMarker
 import com.hazemafaneh.babymonitorpro.ui.components.SoundMeter
 import com.hazemafaneh.babymonitorpro.ui.components.StopBroadcastingButton
 import com.hazemafaneh.babymonitorpro.ui.components.MoveFocusWhen
@@ -78,6 +92,7 @@ import com.hazemafaneh.babymonitorpro.ui.layout.tvOverscan
 import com.hazemafaneh.babymonitorpro.ui.theme.BmpTheme
 import com.hazemafaneh.babymonitorpro.ui.theme.Space
 import com.hazemafaneh.babymonitorpro.ui.theme.Touch
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import org.koin.compose.koinInject
 
@@ -110,8 +125,15 @@ fun SettingsScreen(
     val tints = BmpTheme.tints
 
     var deviceName by remember { mutableStateOf(settings.deviceName) }
-    var motion by remember { mutableStateOf(settings.motionSensitivity.toFloat()) }
-    var sound by remember { mutableStateOf(settings.soundSensitivity.toFloat()) }
+    // Held as the number the parent sees — a *level*, where bigger means louder or more
+    // movement is needed before an alert fires. The detectors want the opposite (sensitivity),
+    // and the conversion happens on the way in and out. See [soundLevelPercent].
+    var motion by remember {
+        mutableStateOf(thresholdForSensitivity(settings.motionSensitivity).toFloat())
+    }
+    var sound by remember {
+        mutableStateOf(thresholdForSensitivity(settings.soundSensitivity).toFloat())
+    }
     var renaming by remember { mutableStateOf(false) }
     var videoHeight by remember { mutableStateOf(settings.videoHeight) }
     var frameRate by remember { mutableStateOf(settings.frameRate) }
@@ -128,6 +150,49 @@ fun SettingsScreen(
     var soundAlerts by remember { mutableStateOf(settings.soundAlerts) }
     var keepAwake by remember { mutableStateOf(settings.keepScreenAwake) }
     var rememberedHost by remember { mutableStateOf(settings.lastManualHost) }
+    var dataSaverFps by remember { mutableStateOf(settings.dataSaverFps) }
+    var startupRole by remember { mutableStateOf(settings.startupRole) }
+
+    // Re-read whenever the screen is shown, because it is granted in a *system* dialog: the
+    // parent leaves the app, taps Allow, and comes back — and a row still reading "restricted"
+    // at that point would be the app calling them a liar.
+    var unrestricted by remember { mutableStateOf(BackgroundAccess.isUnrestricted()) }
+    // A television offers no battery exemption at all — it is mains powered and the dialog
+    // does not exist — so there is nothing to warn about there.
+    val canRequestBackground = remember { BackgroundAccess.canRequest() }
+    val backgroundIsAProblem = !unrestricted && canRequestBackground
+    LaunchedEffect(Unit) {
+        while (true) {
+            unrestricted = BackgroundAccess.isUnrestricted()
+            delay(BACKGROUND_CHECK_MILLIS)
+        }
+    }
+
+    // Which half of the screen is on show.
+    //
+    // The two roles were stacked, so a parent looking for "keep the screen on" scrolled past
+    // nine camera controls that had nothing to do with them — on a phone that is most of a
+    // screen of settings belonging to a job this device may never do. One at a time, chosen
+    // by a pair of buttons at the top, and the screen becomes about a page long.
+    //
+    // It opens on whichever job this device is set up for, so the common case is no taps at
+    // all. A device that has not chosen opens on the camera side, which is the one with the
+    // controls that change what other people see.
+    var showing by rememberSaveable {
+        mutableStateOf(
+            // Follows the job this device was given. If the parent said "open as the camera",
+            // the camera half is the one they mean; if they said "watching", likewise. The
+            // television default only decides when nothing has been chosen, because a TV has
+            // no camera and a page of lens controls is no use to it.
+            when {
+                !supportsCameraRole -> SettingsSection.WATCHING
+                settings.startupRole == StartupRole.CAMERA -> SettingsSection.CAMERA
+                settings.startupRole == StartupRole.VIEWER -> SettingsSection.WATCHING
+                isTelevision -> SettingsSection.WATCHING
+                else -> SettingsSection.CAMERA
+            },
+        )
+    }
 
     val stateFlow = remember(broadcaster) {
         broadcaster?.state ?: MutableStateFlow(BroadcastState(running = false))
@@ -136,14 +201,18 @@ fun SettingsScreen(
 
     val levelFlow = remember(broadcaster) { broadcaster?.soundLevel ?: MutableStateFlow(0f) }
     val level by levelFlow.collectAsState()
+    val motionFlow = remember(broadcaster) { broadcaster?.motionLevel ?: MutableStateFlow(0f) }
+    val motionLevel by motionFlow.collectAsState()
 
     // Both detectors are told at once, because the broadcaster takes them together — and
     // whichever one the parent just moved, the other has to arrive at its current value
     // rather than at the one it had when the screen opened.
     val pushSensitivity: () -> Unit = {
-        settings.motionSensitivity = motion.toInt()
-        settings.soundSensitivity = sound.toInt()
-        broadcaster?.setSensitivity(motion.toInt(), sound.toInt())
+        val motionSensitivity = sensitivityForThreshold(motion.toInt())
+        val soundSensitivity = sensitivityForThreshold(sound.toInt())
+        settings.motionSensitivity = motionSensitivity
+        settings.soundSensitivity = soundSensitivity
+        broadcaster?.setSensitivity(motionSensitivity, soundSensitivity)
     }
 
     Column(
@@ -177,7 +246,144 @@ fun SettingsScreen(
             }
         }
 
+        // Whether the system will let this app keep working with the screen off. It belongs
+        // above the switcher because it is neither a camera setting nor a viewer one: it is
+        // the difference between a monitor that runs all night and one that stops quietly.
+        if (BackgroundAccess.isRelevant) {
+            Surface(
+                modifier = Modifier.fillMaxWidth(),
+                color = if (backgroundIsAProblem) {
+                    // The one row on this screen that is a warning rather than a preference.
+                    MaterialTheme.colorScheme.errorContainer
+                } else {
+                    MaterialTheme.colorScheme.surface
+                },
+                shape = MaterialTheme.shapes.large,
+                border = BorderStroke(
+                    CARD_BORDER,
+                    if (backgroundIsAProblem) {
+                        MaterialTheme.colorScheme.error
+                    } else {
+                        MaterialTheme.colorScheme.outlineVariant
+                    },
+                ),
+            ) {
+                Column(Modifier.padding(horizontal = ROWS_H_PADDING, vertical = ROWS_V_PADDING)) {
+                    SettingRow(
+                        icon = BmpIcons.Shield,
+                        plateFill = tints.leaf.fill,
+                        plateGlyph = tints.leaf.glyph,
+                        label = when {
+                            unrestricted -> "Allowed to run in the background"
+                            !canRequestBackground -> "Runs in the background"
+                            else -> "Android may stop this app"
+                        },
+                        value = when {
+                            unrestricted ->
+                                "The stream and the alerts keep going with the screen off"
+                            // A television: mains powered, no battery optimisation, nothing
+                            // to grant. Said plainly rather than left as a silent gap.
+                            !canRequestBackground ->
+                                "This device has no battery optimisation to turn off"
+                            else -> "Battery optimisation is on. Streaming or watching can " +
+                                "stop minutes after the screen locks."
+                        },
+                        divided = false,
+                    ) {
+                        if (backgroundIsAProblem) {
+                            RowAction(label = "Allow") {
+                                BackgroundAccess.request()
+                            }
+                        }
+                    }
+                    if (backgroundIsAProblem) {
+                        Text(
+                            // The part no app can do for the parent. Naming the two phones in
+                            // this house is not possible, but naming the setting is.
+                            text = "Some phones — Tecno, Huawei, Xiaomi and others — keep a " +
+                                "second list of their own, called Protected apps or " +
+                                "Auto-launch. If the stream still stops, allow this app there " +
+                                "too.",
+                            style = MaterialTheme.typography.bodySmall.copy(
+                                fontSize = HELPER_TEXT,
+                                lineHeight = HELPER_LINE,
+                            ),
+                            color = MaterialTheme.colorScheme.onErrorContainer,
+                            modifier = Modifier.padding(bottom = Space.xs),
+                        )
+                        RowAction(label = "Open app settings") {
+                            BackgroundAccess.openSystemSettings()
+                        }
+                    }
+                }
+            }
+
+            Spacer(Modifier.height(Space.md))
+        }
+
+        // What this device does when it opens. Above the switcher because it is about the
+        // app rather than about either role — and it is the setting that makes the switcher
+        // land on the right side next time.
+        Surface(
+            modifier = Modifier.fillMaxWidth(),
+            color = MaterialTheme.colorScheme.surface,
+            shape = MaterialTheme.shapes.large,
+            border = BorderStroke(CARD_BORDER, MaterialTheme.colorScheme.outlineVariant),
+        ) {
+            Column(Modifier.padding(horizontal = ROWS_H_PADDING, vertical = ROWS_V_PADDING)) {
+                SettingRow(
+                    icon = BmpIcons.House,
+                    plateFill = tints.leaf.fill,
+                    plateGlyph = tints.leaf.glyph,
+                    label = "When the app opens",
+                    value = startupRole.description,
+                    divided = false,
+                )
+                Row(Modifier.padding(start = LISTEN_CHOICE_INSET, bottom = Space.xs)) {
+                    ChoiceRow(
+                        options = StartupRole.entries
+                            .filter { supportsCameraRole || it != StartupRole.CAMERA }
+                            .map { it.label to it },
+                        selected = startupRole,
+                        onSelect = {
+                            startupRole = it
+                            settings.startupRole = it
+                        },
+                        // The remote lands on the first control on the screen.
+                        //
+                        // It used to land on the section switcher further down, and Compose
+                        // dutifully scrolled that into view — which pushed the screen's own
+                        // title and the night button off the top before the parent had
+                        // touched anything. Anchoring the first control means arriving
+                        // scrolls nothing.
+                        anchorFirst = true,
+                    )
+                }
+            }
+        }
+
+        Spacer(Modifier.height(Space.md))
+
+        // Two buttons rather than two stacked sections. See [showing].
         if (supportsCameraRole) {
+            Row(
+                Modifier.fillMaxWidth().padding(bottom = Space.sm),
+                horizontalArrangement = Arrangement.spacedBy(Space.xs),
+            ) {
+                for (section in SettingsSection.entries) {
+                    SectionButton(
+                        label = section.label,
+                        selected = showing == section,
+                        onSelect = { showing = section },
+                        // Where the remote lands: the control that decides what the rest of
+                        // the screen contains. Everything else is one press down from it.
+                        modifier = Modifier.weight(1f),
+                    )
+                }
+            }
+        }
+
+        if (supportsCameraRole && showing == SettingsSection.CAMERA) {
             SettingsSectionLabel("When this device is the camera")
 
             Surface(
@@ -201,7 +407,6 @@ fun SettingsScreen(
                             else -> "Sending video to viewers"
                         },
                         divided = true,
-                        modifier = Modifier.initialFocus(),
                     ) {
                         RowAction(
                             label = if (settings.useFrontCamera) "Use rear" else "Use front",
@@ -283,7 +488,7 @@ fun SettingsScreen(
                         value = if (state.running) {
                             "Takes effect the next time broadcasting starts"
                         } else {
-                            "Change it when something else holds 8080"
+                            "Change it if something else holds this one"
                         },
                         divided = false,
                     ) {
@@ -373,22 +578,47 @@ fun SettingsScreen(
             // alert movement — and the two thresholds do not even mean the same thing: one
             // is a fraction of the frame, the other is loudness.
             SectionCard(title = "Movement alerts", icon = BmpIcons.Teddy) {
+                // What the setting is actually doing, before the control that sets it.
+                // "Sensitivity" means nothing on its own: this says what is being measured,
+                // and — the part that decides whether a parent trusts it — what it cannot do.
+                Text(
+                    text = "The camera compares each frame with the one before it and alerts " +
+                        "you when enough of the picture has changed. It does not know what a " +
+                        "baby is: a kicked-off blanket counts, and so does someone walking in.",
+                    style = MaterialTheme.typography.bodySmall.copy(
+                        fontSize = HELPER_TEXT,
+                        lineHeight = HELPER_LINE,
+                    ),
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Spacer(Modifier.height(Space.sm))
                 SensitivityHeader(
-                    label = "Alert me at",
+                    label = "Alert above",
                     value = motion.toInt(),
                     tint = tints.sky.glyph,
                 )
+                if (state.running && state.videoActive) {
+                    MotionLevelMarker(level = motionLevel, thresholdPercent = motion.toInt())
+                }
                 SensitivitySlider(
                     value = motion,
                     onValueChange = { motion = it },
                     onCommit = pushSensitivity,
                 )
                 Text(
-                    text = if (motion.toInt() == 0) {
-                        "No movement alerts. The picture keeps running."
-                    } else {
-                        "Fires when about ${motionPercent(motion.toInt())} of the picture " +
-                            "changes between frames."
+                    text = when {
+                        state.running && state.videoActive -> {
+                            // Stated the way the parent is thinking: the room is *here*, the
+                            // line is *there*, and an alert fires when the first passes the
+                            // second. Put the line above the cat and the cat is ignored.
+                            val now = motionLevelPercent(motionLevel).toInt()
+                            "The room is at $now% right now. Alerts fire when it reaches " +
+                                "${motion.toInt()}%, so set the line above anything you want " +
+                                "ignored."
+                        }
+                        else -> "Alerts fire when the picture changes more than this. Start " +
+                            "broadcasting and a live mark shows where the room sits, so the " +
+                            "line can go above the things you want ignored."
                     },
                     style = MaterialTheme.typography.bodySmall.copy(
                         fontSize = HELPER_TEXT,
@@ -401,6 +631,17 @@ fun SettingsScreen(
             Spacer(Modifier.height(Space.sm))
 
             SectionCard(title = "Sound alerts", icon = BmpIcons.Rattle) {
+                Text(
+                    text = "The camera measures how loud the room is and alerts you when it " +
+                        "crosses the line you set. It does not tell crying from a lorry going " +
+                        "past — loud is loud.",
+                    style = MaterialTheme.typography.bodySmall.copy(
+                        fontSize = HELPER_TEXT,
+                        lineHeight = HELPER_LINE,
+                    ),
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Spacer(Modifier.height(Space.sm))
                 // The meter belongs with the sound slider and nowhere else: it is the
                 // evidence for *this* threshold.
                 if (state.running && state.audioActive) {
@@ -419,21 +660,32 @@ fun SettingsScreen(
                     Spacer(Modifier.height(Space.sm))
                 }
                 SensitivityHeader(
-                    label = "Alert me at",
+                    label = "Alert above",
                     value = sound.toInt(),
                     tint = tints.lemon.glyph,
                 )
+                // The room, on the slider's own scale, directly above the slider. Only while
+                // this device is listening: a marker pinned at zero on a device with no
+                // microphone running would read as silence rather than as nothing measured.
+                if (state.running && state.audioActive) {
+                    SoundLevelMarker(level = level, thresholdPercent = sound.toInt())
+                }
                 SensitivitySlider(
                     value = sound,
                     onValueChange = { sound = it },
                     onCommit = pushSensitivity,
                 )
                 Text(
-                    text = if (sound.toInt() == 0) {
-                        "No sound alerts. Listening still works."
-                    } else {
-                        "Drag right and quieter sounds will reach you. The bars above are " +
-                            "live, so you can set it against the actual room."
+                    text = when {
+                        state.running && state.audioActive -> {
+                            val now = soundLevelPercent(level).toInt()
+                            "The room is at $now% right now. Alerts fire when it reaches " +
+                                "${sound.toInt()}% — so with a fan running at $now%, set the " +
+                                "line above it. The tall mark is live, the short one is the " +
+                                "loudest of the last few seconds."
+                        }
+                        else -> "Alerts fire when the room is louder than this. Start " +
+                            "broadcasting and a live mark shows where it sits."
                     },
                     style = MaterialTheme.typography.bodySmall.copy(
                         fontSize = HELPER_TEXT,
@@ -446,6 +698,7 @@ fun SettingsScreen(
             Spacer(Modifier.height(Space.md))
         }
 
+        if (showing == SettingsSection.WATCHING) {
         SettingsSectionLabel("When this device is watching")
 
         Surface(
@@ -471,6 +724,9 @@ fun SettingsScreen(
                         startWithSound = it
                         settings.startWithSound = it
                     },
+                    // No anchor here: the section switcher above owns this screen's focus, and
+                    // two requesters racing on one screen is a remote that lands wherever the
+                    // recomposition order happens to put it.
                     modifier = if (supportsCameraRole) Modifier else Modifier.initialFocus(),
                 )
 
@@ -534,6 +790,32 @@ fun SettingsScreen(
                     )
                 }
 
+                // For watching from outside the house. MJPEG sends a whole picture per
+                // frame, so the saving is close to linear — and "is the baby still asleep"
+                // is a question two frames a second answers perfectly well.
+                SettingRow(
+                    icon = BmpIcons.House,
+                    plateFill = tints.sky.fill,
+                    plateGlyph = tints.sky.glyph,
+                    label = "Data saver",
+                    value = when (dataSaverFps) {
+                        null -> "Full speed — right on your own WiFi"
+                        else -> "Asks the camera for $dataSaverFps frames a second"
+                    },
+                    divided = false,
+                )
+                Row(Modifier.padding(start = LISTEN_CHOICE_INSET, bottom = Space.sm)) {
+                    ChoiceRow(
+                        options = DATA_SAVER_CHOICES,
+                        selected = dataSaverFps,
+                        onSelect = {
+                            dataSaverFps = it
+                            settings.dataSaverFps = it
+                        },
+                    )
+                }
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+
                 SwitchRow(
                     icon = BmpIcons.Moon,
                     plateFill = tints.grape.fill,
@@ -574,6 +856,8 @@ fun SettingsScreen(
             }
         }
 
+        }
+
         Spacer(Modifier.height(Space.sm))
 
         PrivacyCard(address = state.primaryAddress)
@@ -586,8 +870,8 @@ fun SettingsScreen(
                 // Everything on screen comes back from the store, so the screen agrees with
                 // the device immediately rather than after a trip out and back.
                 deviceName = settings.deviceName
-                motion = settings.motionSensitivity.toFloat()
-                sound = settings.soundSensitivity.toFloat()
+                motion = thresholdForSensitivity(settings.motionSensitivity).toFloat()
+                sound = thresholdForSensitivity(settings.soundSensitivity).toFloat()
                 videoHeight = settings.videoHeight
                 frameRate = settings.frameRate
                 port = settings.port
@@ -597,8 +881,13 @@ fun SettingsScreen(
                 soundAlerts = settings.soundAlerts
                 keepAwake = settings.keepScreenAwake
                 rememberedHost = settings.lastManualHost
+                dataSaverFps = settings.dataSaverFps
+                startupRole = settings.startupRole
                 onNightChanged(settings.nightMode)
-                broadcaster?.setSensitivity(motion.toInt(), sound.toInt())
+                broadcaster?.setSensitivity(
+                    sensitivityForThreshold(motion.toInt()),
+                    sensitivityForThreshold(sound.toInt()),
+                )
             },
         )
 
@@ -610,6 +899,57 @@ fun SettingsScreen(
         }
 
         Spacer(Modifier.height(Space.xl))
+    }
+}
+
+/** The two halves of this screen, one shown at a time. */
+private enum class SettingsSection(val label: String) {
+    CAMERA("This device as camera"),
+    WATCHING("This device watching"),
+}
+
+/**
+ * One half of the switcher.
+ *
+ * Full-width pair rather than small pills: this is the control that decides what the rest of
+ * the screen even contains, so it has to read as a heading you press, not as a filter chip.
+ */
+@Composable
+private fun SectionButton(
+    label: String,
+    selected: Boolean,
+    onSelect: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val scheme = MaterialTheme.colorScheme
+    Surface(
+        modifier = modifier
+            .heightIn(min = Touch.min)
+            .pressable(
+                onClick = onSelect,
+                role = SemanticsRole.Tab,
+                focusShape = MaterialTheme.shapes.extraLarge,
+            ),
+        shape = MaterialTheme.shapes.extraLarge,
+        color = if (selected) scheme.secondaryContainer else scheme.surface,
+        border = BorderStroke(
+            CARD_BORDER,
+            if (selected) scheme.secondary else scheme.outlineVariant,
+        ),
+    ) {
+        Row(
+            Modifier.fillMaxWidth().padding(horizontal = Space.sm, vertical = Space.sm),
+            horizontalArrangement = Arrangement.Center,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                text = label,
+                style = MaterialTheme.typography.labelLarge.copy(fontSize = SECTION_BUTTON),
+                fontWeight = FontWeight.Bold,
+                color = if (selected) scheme.onSecondaryContainer else scheme.onSurfaceVariant,
+                textAlign = TextAlign.Center,
+            )
+        }
     }
 }
 
@@ -695,14 +1035,20 @@ private fun <T> ChoiceRow(
     options: List<Pair<String, T>>,
     selected: T,
     onSelect: (T) -> Unit,
+    /** Marks the first pill as this screen's landing place for the remote. */
+    anchorFirst: Boolean = false,
 ) {
     val scheme = MaterialTheme.colorScheme
     Row(horizontalArrangement = Arrangement.spacedBy(Space.xs)) {
-        for ((label, value) in options) {
+        for ((index, option) in options.withIndex()) {
+            val (label, value) = option
             val isSelected = value == selected
             Surface(
                 modifier = Modifier
                     .heightIn(min = Touch.min)
+                    .then(
+                        if (anchorFirst && index == 0) Modifier.initialFocus() else Modifier,
+                    )
                     .pressable(
                         onClick = { onSelect(value) },
                         role = SemanticsRole.RadioButton,
@@ -1003,6 +1349,10 @@ private fun ResetConfirmAction(onConfirm: () -> Unit) {
 private val TITLE_TEXT = 21.sp
 private val ACTION_TEXT = 13.sp
 private val SECTION_LABEL = 12.sp
+private val SECTION_BUTTON = 13.sp
+
+/** Slow: it only changes when the parent has been out to a system dialog and back. */
+private const val BACKGROUND_CHECK_MILLIS = 1_500L
 private val SETTING_LABEL = 13.sp
 private val SETTING_LABEL_LG = 15.sp
 private val SETTING_VALUE = 11.5.sp

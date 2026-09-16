@@ -4,7 +4,8 @@ Version **1** (`protocolVersion` in every handshake). LAN only — the broadcast
 `0.0.0.0` so other devices on the same WiFi can reach it, and nothing in the app ever
 contacts a server outside that network.
 
-- Transport: plain HTTP/1.1 and WebSocket on **port 8080** by default.
+- Transport: plain HTTP/1.1 and WebSocket on **port 47821** by default. Not 8080: that port is
+  contested on a normal home network, and a camera that cannot bind offers no address at all.
 - Discovery: mDNS service type `_babymonitorpro._tcp`.
 - Pairing link: `bmpro://<host>:<port>`.
 

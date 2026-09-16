@@ -646,6 +646,701 @@ why it only surfaced now, and why it hit both viewers at once.
 
 ---
 
+## Session 6 — 2026-09-16 — the backlog
+
+Eleven items from WhatsApp. Working through all of them; this section grows as each lands.
+
+### Done: a port nothing else wants
+
+`Bmp.DEFAULT_PORT` is now **47821**, not 8080. 8080 is the most contested port on a home
+network — a dev server, a router's admin page, a media server, a second copy of this app —
+and a camera that cannot bind it prints no pairing address at all. 47821 is in the registered
+range and assigned to nothing. Safe to change because both ends are this app: the QR code and
+the pairing line both carry the port, and the port setting still overrides it. `PROTOCOL.md`,
+the README and the two tests that assumed the default were updated with it.
+
+### Done: the camera stops being discoverable when its phone locks
+
+**Cause:** with the screen off, Android puts the WiFi chip into power save, where it wakes
+periodically and **drops most multicast**. mDNS is entirely multicast, so the camera stopped
+answering discovery queries the moment the phone locked — it was broadcasting perfectly well,
+it just could not be found. The same power save is what made streams stutter shortly after the
+screen went dark.
+
+**Fix:** `BroadcastService` now holds two locks for as long as it runs:
+
+- a **WiFi lock** (`WIFI_MODE_FULL_LOW_LATENCY`, `FULL_HIGH_PERF` below API 29) to keep the
+  radio out of power save, which is what restores both mDNS replies and a steady stream;
+- a **partial wake lock**, because a foreground service is not killed but its threads are
+  still frozen in deep doze — and the capture pipeline and HTTP server are plain coroutines.
+
+Both released in `onDestroy`, so an idle phone pays nothing.
+
+### Done: backgrounding the viewer killed the stream and every alert
+
+**Your report:** leave the app and the Live Update says disconnected or reconnecting, and no
+alerts arrive.
+
+**Cause:** the camera end has had a foreground service since the beginning. The watching end
+had **nothing**. Switching to another app therefore gave Android permission to freeze the
+process — the MJPEG stream and the control socket were cut, the shade fell to "Reconnecting",
+and no alert could arrive because nothing was listening for one.
+
+**Fix:** a `ViewingService`, the mirror of the broadcast one — a `mediaPlayback` foreground
+service (it plays the nursery's audio, so that is the honest type) holding the same wake and
+WiFi locks, started and stopped by the live view through a new `PlatformViewingSession`
+expect/actual. `START_NOT_STICKY`, unlike the camera: a restarted viewing service would be
+watching nothing.
+
+### Done: "who's watching" was wrong
+
+**Cause:** viewers were counted on `/stream`. That connection is reopened on every blink,
+reconnect and backgrounding, and each of those incremented the count going in and decremented
+it coming out — so one television could read as "2 watching", and a viewer that walked out of
+range stayed counted until its socket timed out.
+
+**Fix:** the count is taken on the **control channel** instead. A viewer opens exactly one and
+holds it for as long as it is watching, which is the connection whose lifetime actually means
+"someone is watching".
+
+### Done: Tailscale devices are discoverable
+
+**Your report:** Tailscale is installed, you connect to the home instance, discovery still
+finds nothing.
+
+**Why it could never have worked:** a tailnet is a mesh of point-to-point WireGuard tunnels
+and **carries no multicast**. mDNS is entirely multicast. So a camera reachable over Tailscale
+is invisible to `_babymonitorpro._tcp` by construction — no amount of fixing the browser
+changes that. The same is true of guest networks and any router that filters mDNS.
+
+**So the tailnet is probed instead of browsed.** New `Tailnet` + `CameraProbe`:
+
+- Tailscale allocates every node an address in **100.64.0.0/10**, and a node can see its own.
+  That address was invisible to this app until now, because `localIpv4Addresses()` filters to
+  RFC1918 — correctly, since that list feeds the pairing card. A new unfiltered
+  `allIpv4Addresses()` sits beside it.
+- When this device holds a tailnet address, the Find screen probes the **/24 it sits in** plus
+  **100.64.0.0/24** (where Tailscale starts allocating), asking each for `/info` on the camera
+  port. Anything that answers as a camera is offered, under the name it reports.
+- Bounded hard: ~500 addresses, 24 sockets at a time, 1.2s each, one port, one path. A full
+  sweep of 100.64.0.0/10 is four million addresses and is never attempted — that is a port
+  scan, not a feature. Nothing is probed at all on a device with no tailnet address.
+- The card is its own section, **"Over Tailscale"**, with its own Search again.
+- **Three ports are asked, not one:** this device's configured port, the new default (47821)
+  and `Bmp.LEGACY_PORT` (8080). The two ends of a pair are updated at different times, and a
+  viewer that only asks the new port reports "nothing found" for a camera that is working
+  perfectly well on the old one — which is exactly what happened on the first attempt here.
+- **The /24 of any camera in Recently connected is probed too**, ahead of the guesses.
+  Tailscale allocates across the whole /10 fairly arbitrarily, so a peer is often *not* in
+  this device's own /24 — that is the honest limit of scanning. An address that has worked
+  before is evidence about where the household's nodes actually live, and evidence beats a
+  guess, so those blocks are asked first and the cap cannot squeeze them out.
+
+**The limit, stated plainly:** if the camera sits outside the probed blocks, scanning will not
+find it. A full sweep of 100.64.0.0/10 is four million addresses and is not something this app
+will ever do. The reliable first contact is to type the camera's tailnet address once — the
+camera's own pairing card now shows it — after which it is in Recently connected and its
+block is probed automatically.
+
+The camera end helps too: the pairing card now offers the camera's tailnet address alongside
+its LAN one, because that is the address a device watching from outside the house needs and
+there is nowhere else on the phone to find it.
+
+### Done: recently connected devices
+
+Up to six cameras that actually answered, newest first, stored as `host|port|time|name` and
+offered as tappable rows on the Find screen. Recorded when a camera sends its first status —
+an address that refused is not worth offering tomorrow — and under the name the camera calls
+itself, which matters most for a tailnet address like `100.87.4.19`.
+
+This is also the reliable path for anything discovery cannot reach, tailnet or otherwise.
+
+### Done: the streaming phone's battery
+
+`Status` and `/info` now carry `batteryPercent` and `charging`, read fresh on the camera
+(`BatteryManager` on Android, `UIDevice` on iOS, unknown on desktop/web). The viewer shows it
+beside the camera's name — but only when it is **low (≤20% and not charging)** or charging.
+A number that is always on screen is a number nobody reads; this one matters at 4am, and
+"8% on a charger" is a different fact from "8% on a shelf".
+
+### Done: low-bandwidth mode
+
+For watching over mobile data. `GET /stream?fps=N` — the camera **drops frames** for that one
+viewer. Not re-encoding: recompressing per viewer would pile the work onto the nursery phone,
+the oldest device in the system. MJPEG sends a whole picture per frame, so dropping is very
+nearly linear — 2 fps is a sixth of the data of 12, and "is she still asleep" is a question
+2 fps answers.
+
+Viewer setting **Data saver**: Off / 5 / 2 / 1 fps, persisted, applied per connection. Absent
+means full speed, which is right on home WiFi.
+
+### Done: change the nursery device's settings from the watching device
+
+New `SetCameraSettings` control message — every field nullable, null meaning "leave it alone",
+so a viewer turning the torch on need not restate six other settings. New
+`RemoteCameraControls` panel, opened from a **Camera** button in the live view's bar and rail:
+
+- lens, torch, movement sensitivity, sound sensitivity — applied immediately;
+- picture size and frame rate — these rebind the capture pipeline, so the panel says plainly
+  that the feed will blink;
+- device name, which re-registers mDNS.
+
+Every change is answered with a fresh status to **all** viewers, because two parents watching
+one cot must not disagree about which way the lens is pointing. The panel reads from the
+camera's reported status rather than local state, so a request the camera refuses simply never
+changes the reading.
+
+### Done: zoom the feed
+
+Pinch to zoom to 4x, drag to pan, double-tap to reset. Bounded at 4x (where the JPEG blocks
+take over from the baby) and the pan is clamped to the picture's own edges, so it can never be
+dragged into a black screen you have to guess your way out of. Entirely local — no extra data,
+and nothing asked of the camera. Off on a television, which has nothing to pinch.
+
+### Done: the chrome stops disappearing
+
+**Your ask:** leave the UI up — live, latency, sound — in portrait too, not only landscape.
+
+It auto-hid four seconds after the last touch on a phone. The things it took with it are
+exactly the things a parent glances at the phone *for*: whether the feed is live, the latency,
+and the Sound control. Now it never hides, on any device or orientation. That also removes the
+last focus trap on a television, where there was no tap to bring it back.
+
+### Verified
+
+Built for Android, JVM and wasm; `:shared:jvmTest` passes. Installed on the Tecno (over
+wireless adb at `192.168.0.154` — the address had changed) and pushed to its Downloads folder
+for the TV. App launches clean, no fatal exceptions, Find screen renders with its new sections.
+
+**Not yet verified, and needing you:**
+
+- The Huawei was not connected to adb this session, so it still has the previous build.
+- The Tailscale card cannot be checked from here: the Tecno holds no 100.x address right now,
+  so the probe correctly stays hidden. Turn Tailscale on at both ends and the "Over Tailscale"
+  card should appear and find the camera.
+- Battery, remote camera controls and data saver all need a live camera to exercise.
+
+---
+
+## Session 7 — 2026-09-16 — reorganisation, and a real TV to test on
+
+### Fixed: the Camera panel looked like it did nothing
+
+**Your report:** the Camera button in the feed did nothing.
+
+Two causes, and the first was mine. `RemoteCameraControls` was emitted **before** the
+full-screen video `Row`, which has a black background — so the panel was composed, laid out
+and focusable, and then painted over. Both now sit in an explicit `Box` with the panel last.
+
+The second cause is the one still outstanding for you: the camera phone is a build behind.
+`SetCameraSettings` is a new message type, and the old camera's decoder drops any type it does
+not know — deliberately, so a newer viewer cannot break an older camera. Until that phone is
+updated the panel will open and move and the camera will ignore every instruction.
+
+### Settings, reorganised
+
+**Your report:** the settings page feels hard.
+
+It was two long sections stacked, so anyone looking for "keep the screen on" scrolled past
+nine camera controls belonging to a job their device may never do.
+
+- A **two-button switcher** at the top — *This device as camera* / *This device watching* —
+  showing one at a time. The screen is about a page long now.
+- It opens on the half that matches this device: the startup role if one is set, and always
+  **watching** on a television, which has no camera.
+- The switcher is full-width buttons rather than small pills, because it decides what the rest
+  of the screen contains — that is a heading you press, not a filter chip.
+
+### New: what the app does when it opens
+
+**Your ask:** toggles to open on Watch or on Camera.
+
+One choice of three rather than two toggles — **Ask me** (default) / **Camera** / **Watching**
+— because two switches can both be on and "open as camera AND open watching" has no meaning.
+A device can only do one of them first.
+
+The nursery phone is always the camera and the kitchen tablet is always watching, and both
+were asking the same question at every launch, at night, of someone holding a baby. A tapped
+alert still wins over the preference: that is a more specific instruction.
+
+### Verified on a real Android TV
+
+Set up an Android TV emulator on this machine — 1080p, API 36, x86_64, KVM — and drove it with
+D-pad key events. To make room: removed two system images that backed no AVD, then (with your
+go-ahead) the WearOS AVD and image and the Pixel AVD. 15 GB free now.
+
+What the emulator confirmed:
+
+- The app **launches from the leanback launcher**, so the manifest work is right.
+- `isTelevision` detects correctly through `UiModeManager` — a phone-shaped APK sideloaded
+  onto a TV is recognised as a television, which is exactly how it arrives on yours.
+- **Focus rings render complete** on tab pills, role cards and choice pills. The clipping you
+  reported is gone: drawn after the content, inset 6dp, no scale.
+- **D-pad navigation** moves correctly between the tab strip, the cards and the switcher.
+- **Overscan gutters** hold everything clear of the panel edges.
+- Settings **opens on "This device watching"** on a TV.
+
+One flaw found and fixed there: focus landed on the section switcher, and Compose scrolled it
+into view — which pushed the screen's own title and the night button off the top before the
+parent had touched anything. The anchor moved to the first control, so arriving scrolls
+nothing. A `ChoiceRow` can now mark its first pill as a screen's landing place.
+
+Also from the TV audit: the remote-settings panel's full-screen scrim is no longer a focus
+target on a television, where a screen-sized focusable would swallow every D-pad press before
+the panel's own controls saw one.
+
+---
+
+## Session 8 — 2026-09-16 — the emulator earns its keep
+
+Set the TV emulator up as a **real second device**: its cameras bound to the laptop's webcam
+(`hw.camera.back/front = webcam0`), audio input enabled, and its port bridged onto the LAN
+(`adb forward` plus a `socat` listener on the host's 192.168.1.134) so a phone can watch it.
+An emulator is behind NAT, so without that bridge nothing outside can reach it.
+
+That setup immediately found four bugs that no amount of reading would have.
+
+### Bug: one-lens devices produced no video at all
+
+The emulator has a single camera. The app asks for the **front** lens by default, CameraX
+threw `No available camera can be found`, and the failure was silent in every way that
+counts — the server still answered `/stream` with a body that never produced a byte, and the
+camera screen sat on "Starting" forever.
+
+Any single-lens device hits this: tablets, TV boxes, a handset with a dead front module.
+`bind()` now tries the requested lens, then the other one, then no lens requirement at all,
+and mirrors back whichever it actually got so the UI and the viewer's remote controls agree.
+
+### Bug: "this camera has no microphone available" about a working microphone
+
+`isMicrophoneAvailable()` trusted `FEATURE_MICROPHONE`. An Android TV box declares no such
+feature — a television has no built-in mic — while recording perfectly well from a USB or
+virtual input. Every viewer was told there was nothing to listen to.
+
+The flag is now a hint. When it is absent the app asks the audio system directly: build an
+`AudioRecord` at the configured format, see whether it initialises, release it. That is the
+only question that matters, and it is asked once per broadcast.
+
+### Bug: the battery reading wrapped one character per line
+
+Visible the moment a phone watched the emulator: the bar showed a teddy, a vertical column
+spelling `0%·charging` down the middle, and no camera name. The name had no weight, so it
+claimed the row and left the battery a few pixels to render in.
+
+Fixed with a weight on the name and `softWrap = false` on the battery — and then the deeper
+problem showed through, below.
+
+### The live view's bar, reorganised
+
+**Your report:** the buttons are clogged up while watching.
+
+The bar carries six things — mark, name, address, battery, sound pill, three actions — and on
+a 393pt screen that does not fit on one line. It is now **two rows on a phone** (identity,
+then controls) and one row on anything wider.
+
+Written as two explicit rows rather than a wrapping layout: a flow layout counts every spacer
+as an item and broke the controls across three lines in an order nobody chose. The camera
+button also became a **glyph** rather than the word "Camera", which is what had finally
+squeezed the name out of existence.
+
+### New: the viewer can turn the picture
+
+**Your ask:** let the viewer rotate the video.
+
+A rotate control in the bar, a quarter turn per press, applied on the watching device only —
+it asks nothing of the nursery phone and costs no bandwidth. The camera is propped against a
+cot rail or wedged under a mattress, and whichever way *it* thinks is up is frequently not the
+way the room is; the viewer is the end that knows how the parent is holding their phone.
+
+### Bug: remote settings changed nothing on the camera
+
+**Your report:** changed the TV camera's settings from the phone, and the TV camera did not
+reflect it.
+
+Two halves. The camera phone being a build behind is one (an old camera drops the unknown
+`SetCameraSettings` message by design). The other was mine: remote changes were applied to the
+*running broadcaster* and never written to the camera device's own settings — so that device's
+settings screen went on showing the old values, and the next start read them back from storage
+and undid everything.
+
+`Broadcaster.onRemoteSettings` now hands every remote change to the app layer, which writes it
+through to `AppSettings`. The torch is deliberately **not** stored: it is what the room is
+doing right now, not a preference, and a camera that came back from a restart with the light
+on would be a camera that woke the baby.
+
+### Bug: a tapped alert opened the camera list
+
+Found while testing the new startup preference. Both the deep-link handler and the startup
+navigation run on the first composition, and the deep-link handler *consumes* the pending link
+as it navigates. The startup effect read the pending value inside itself, saw an empty one,
+and pushed Find on top of the live view. It now snapshots "did we arrive by link" before any
+effect runs.
+
+### Settings section follows the startup role
+
+**Your ask.** If this device opens as the camera, the settings screen opens on *This device as
+camera*; if it opens watching, it opens on *This device watching*. The television default only
+decides when nothing has been chosen.
+
+### Verified on the two devices
+
+Phone watching the emulator's webcam over the LAN bridge: picture live at ~280ms, **Sound on**
+available (mic probe working), bar laid out in two clean rows with name, battery, sound,
+rotate, camera and Close all legible, and the rotate control turning the picture a quarter turn
+per press.
+
+---
+
+## Session 9 — 2026-09-16 — the emulator as a device, and a readable threshold
+
+### The AVD, made usable
+
+**Your report:** the emulator is slow and laggy.
+
+Three causes, and the biggest was not the emulator's specs:
+
+- **`hw.gpu.enabled = no` in the AVD config.** Every frame was composited in software even
+  though `-gpu host` was on the command line. Now `host`, running on the real Intel Iris Xe.
+- **A starved VM:** 1536 MB of RAM and 4 cores for an Android 16 TV image. Now 6 GB, 6 cores,
+  768 MB VM heap, 8 GB data partition.
+- **The host itself was saturated.** `llama-server` (Ollama, root-owned) was taking 468% CPU
+  mid-inference — nearly five of twelve cores — with the Gradle daemon on another third. The
+  emulator was getting the leftovers. Stopped the Gradle daemon; Ollama needs
+  `sudo systemctl stop ollama` from you, and was idle again by the time we looked.
+
+Also turned all three guest animation scales to 0, which is most of the perceived speed.
+
+Input round trips now measure 0.07s.
+
+### Bug: the keyboard covered the Connect button
+
+**Your report:** the on-screen keyboard overlays the screen and Connect cannot be pressed.
+
+Not an emulator quirk — the Find screen had no `imePadding`, so the IME simply covered the
+bottom of the screen, which is exactly where Connect sits, directly under the field being
+typed into. It happens on a phone in landscape too; it is merely worst on a television, where
+the leanback keyboard is enormous.
+
+Fixed with `imePadding()` on the scrolling column, and the field's own keyboard action is now
+**Go**, which connects — so the button is no longer the only way out of the form.
+
+### New: the alert history follows the newest entry
+
+**Your ask:** auto-scroll "Earlier today" to the latest.
+
+The list is newest-first and the card kept its scroll offset as entries were prepended, so a
+parent who had scrolled down to read something older stayed parked there while new alerts
+piled up above them, unseen. It now animates back to the top whenever one arrives.
+
+### New: the sound threshold is a reading, not a guess
+
+**Your ask:** draw a live line on the sound slider showing where the room's noise currently
+reaches, so the percentage can be chosen rather than guessed. And show it everywhere the
+threshold is set.
+
+The slider asks for a percentage; the room produces an RMS figure; nothing connected the two.
+`SoundDetector.sensitivityFor()` is the inverse of the threshold curve, so a measured level
+maps onto the slider's own scale — "this noise would alert at 62% and above".
+
+`SoundLevelMarker` draws that over the track, with two marks:
+
+- a **live line** tracking the current chunk, marigold once it is past the threshold;
+- a **peak line** holding the loudest of the last few seconds and decaying back, because the
+  noise worth setting a threshold against — a cough, a door, one cry — is over long before
+  anyone has looked up at the screen.
+
+It appears in **both** places the threshold is configured: the camera's own settings screen,
+and the viewer's remote camera panel, where it is fed by the audio that device is actually
+receiving. Where nothing is being measured — sound off, or not broadcasting — it says so
+rather than drawing a mark pinned at zero, which would read as a silent nursery.
+
+The prose under the slider now reads "the room right now would alert at 41% and above" rather
+than describing the bars.
+
+### Installed
+
+Built for Android, JVM and wasm; `:shared:jvmTest` passes. Installed on the TV emulator and
+the phone, and pushed to the phone's Downloads for the television.
+
+---
+
+## Session 10 — 2026-09-16 — the slider now means what it looks like it means
+
+### The threshold scale was inverted
+
+**Your words:** "the room reports 60%, a fan is running, I want to ignore it, so I set 70% and
+it alerts only above 70". Same for movement.
+
+That is the obvious reading, and it was the opposite of what the app did. The detectors think
+in **sensitivity** — how little it takes to set them off — so a *higher* number meant a
+*lower* bar, and setting 70 against a fan reading 60 would have alerted on the fan
+continuously. The number went down as the room got louder.
+
+Both sliders are now **levels**, on the same scale as the live mark:
+
+- bigger number = the room has to be louder, or moving more, before anything fires;
+- the reading and the control are in the same units, so "the room is at 60, set the line to
+  70" does exactly what it says;
+- the inversion happens once, at the UI boundary (`sensitivityForThreshold` /
+  `thresholdForSensitivity`), so the wire protocol, the stored settings and the detectors are
+  all untouched.
+
+Labels changed from "Alert me at" to **"Alert above"**, and the helper text now reads: *"The
+room is at 43% right now. Alerts fire when it reaches 70% — so with a fan running at 43%, set
+the line above it."*
+
+Applied in **both** places a threshold is set: the camera's settings screen and the viewer's
+remote panel.
+
+### The live mark, for movement too
+
+The motion detector already computed a changed-pixel ratio per frame and threw it away.
+`Broadcaster.motionLevel` now publishes it exactly as `soundLevel` does, so the movement
+slider gets the same live mark and peak-hold as the sound one — on the camera's settings
+screen, where the picture is actually being analysed.
+
+The viewer's panel gets the explanation but no movement mark: the camera sends motion
+*events*, not a continuous reading, and inventing one on the viewer would be a lie.
+
+### Both alert kinds now explain themselves
+
+**Your ask:** explain movement alerts on both pages.
+
+Above each slider, in both the settings screen and the viewer's panel:
+
+- **Movement:** "The camera compares each frame with the one before it and alerts you when
+  enough of the picture has changed. It does not know what a baby is: a kicked-off blanket
+  counts, and so does someone walking in."
+- **Sound:** "The camera measures how loud the room is... It does not tell crying from a lorry
+  going past — loud is loud."
+
+Both say what the detector *cannot* do, which is the part that decides whether a parent trusts
+an alert at 3am.
+
+### The alert history reads the right way round
+
+**Your report:** it does not auto-scroll to the end.
+
+It was newest-first, so "the end" was the top and there was nothing to scroll to. Defensible
+on paper, wrong in the hand: an event list is read like a conversation, and the last one means
+the one at the bottom. Now oldest-first, newest at the end, and the card follows it — keyed on
+the scroll extent as well as the count, because the new row has not been laid out at the
+moment the count changes.
+
+Chronological order also makes a run of alerts legible as a run: three in five minutes reads
+as a baby waking up.
+
+### Installed
+
+Android, JVM, wasm and `:shared:jvmTest` all pass. On the TV emulator, on the phone, and
+pushed to the phone's Downloads for the television.
+
+---
+
+## Session 11 — 2026-09-16 — parity between phone and television
+
+**Your point:** the same features should exist on a phone and on a TV, or they are not
+features. Three things were phone-only, and one message was lying.
+
+### Rotate, on the television
+
+The rotate control was added to the phone's bottom bar and nowhere else, so the TV — which
+uses the rail instead — never got it. The rail now has it, and the television is the device
+that needs it most: the nursery phone is propped at whatever angle the shelf allows, and
+nobody is going to walk in and straighten it at 2am.
+
+### Zoom, on the television
+
+Zoom was pinch-and-double-tap, which is no feature at all on a remote. The rail now has
+**zoom out / zoom in** buttons with the current factor printed between them, half a step per
+press over the same 1x–4x range. The zoom state moved up to the screen so both routes drive
+one value, and the pan re-clamps whenever the zoom changes by either route — a button can zoom
+out from under a pan in a way a pinch cannot.
+
+A control at the end of its range dims rather than disappearing: a button that vanishes takes
+the remote's focus with it, which is the bug class this app has already been bitten by twice.
+
+### The threshold marks now work on every viewer
+
+**Your report:** the camera panel shows the live threshold on the TV but not on the phone.
+
+The panel was deriving the sound level from the audio *this device* was playing — so it
+appeared only when the sound happened to be on, and there was no movement reading at all.
+
+The camera now reports both readings in its `Status`, and sends one **every two seconds**
+while broadcasting. Status used to be sent only when something changed, which is right for
+everything in it except a live measurement. Two seconds is invisible on the wire — one small
+JSON object per viewer — and quick enough that a mark moves while a parent is watching the
+room it describes.
+
+So both marks now appear on any viewer, phone or television, whether or not it is playing
+sound. The old path stays as a fallback for a camera too old to report levels.
+
+### Alert wording was stuck on two phrases
+
+**Your report:** it always says "faint" for sound and "a lot" for movement.
+
+Correct, and the cause is arithmetic. The bands sat on the **raw** magnitude, and the raw
+magnitude is not where the events are:
+
+- a sound alert fires around 0.03–0.1 RMS, well under the 0.25 the "loud" band wanted, so
+  **every** sound alert read "Faint";
+- a motion alert cannot fire below its own threshold, which at the default is already past the
+  "a lot" band, so **every** movement alert read "A lot of movement".
+
+Two labels doing no work whatsoever. They are now banded on the same normalised 0..100 scale
+the sliders and the live marks use — quarters of it — so the words move with the room, and
+they are the same numbers the threshold was set against. Sound reads Faint / Quiet but there /
+Clearly audible / Loud; movement reads Slight / Some / Plenty / A lot.
+
+The conversion moved to the detectors (`levelPercent`), which is where it belongs — the UI
+helpers now delegate rather than keeping their own copy of the arithmetic.
+
+### Installed
+
+Android, JVM, wasm and `:shared:jvmTest` pass. On the emulator, the phone, and the phone's
+Downloads for the television.
+
+---
+
+## Session 12 — 2026-09-16 — a frozen picture is the worst failure there is
+
+### The camera died when the phone locked, and never came back
+
+**Your report:** after locking the Tecno the stream froze on the AVD — and then froze in the
+Tecno's own preview too.
+
+**Measured:** both a locked and an awake sample returned *exactly* 53,094 bytes. Identical
+byte counts are not a slow camera, they are no camera: that was the replay buffer being
+handed to each new connection, with nothing behind it. Logcat showed the capture session
+being disconnected around the lock.
+
+**Why it is the worst possible failure:** nothing throws. The foreground service stays up, the
+server goes on answering `/stream`, and every viewer keeps showing the last frame it received.
+A frozen picture of a sleeping baby looks exactly like a sleeping baby.
+
+**Fix — the capture pipeline is now restartable, and watched.** `startVideo()` was split out
+of `start()`, and a watchdog checks every two seconds whether a frame has arrived in the last
+six. Six seconds is roughly fifty missed frames at the slowest rate the app offers, so a
+merely slow camera is never restarted — only a dead one. Recovery tears the controller down
+and builds a new one, because a disconnected CameraX session cannot be revived: rebinding the
+same instance just hands back the same closed device.
+
+**Verified on the Tecno, locked:**
+
+| | bytes per 8s |
+|---|---|
+| Awake, baseline | 6.6 MB |
+| Locked, 30s in | 6.8 MB |
+| Locked, 45s in | 7.05 MB |
+
+Full rate with the screen off, sustained. The AVD's picture was confirmed moving rather than
+still by comparing two screenshots six seconds apart.
+
+The watching end was tested the same way earlier: locking the AVD left the phone still
+reporting "1 watching", with `ViewingService` alive — the foreground service work from session
+6 holding up.
+
+### The rail, rebuilt around what fits
+
+A run of small reports, all from the television:
+
+- **The controls fell off the bottom.** The rail is a column and its middle grows; once
+  "Earlier today" filled up, Sound, rotate, the camera panel and Close were pushed off the
+  screen, leaving a parent looking at a list of alerts with no way to turn the sound on or
+  leave. The history card now takes the *remaining* height and its list scrolls internally,
+  so the controls cannot move and every card stays whole.
+- **A clipped card edge.** With an outer scroll, the card's rounded bottom sat under the
+  viewport edge and read as broken rather than scrolled. Gone with the same change.
+- **Zoom, and then pan.** Pinch is not available on a remote, so zoom became buttons — and
+  panning needs its own, because the D-pad is busy walking focus. One row: zoom out, the four
+  arrows, zoom in. The arrows are always present, dimmed at 1x rather than hidden, because a
+  control that appears and disappears under the remote is how focus gets lost.
+- **The zoom factor label was dropped** — a parent can see how far in they are by looking at
+  the picture, which is what they are already doing, and the row needed the width.
+- **One action row:** rotate, camera settings, Sound (taking the spare width, because its
+  label is the only one that has to say which way it is set), and Close as a **✕**. "Sound on"
+  had been clipping to "Sound", which is a switch whose label does not say its state.
+- **The meter card is shorter on a television** (24dp of bars, tighter padding), since the
+  rail there also has to hold zoom, pan, sound and three actions.
+
+### Installed
+
+On the emulator, the phone, and the phone's Downloads for the television.
+
+---
+
+## Session 13 — 2026-09-16 — permission to stay alive
+
+**Your question:** does the app need permission to run in the background, and are all the
+permissions it needs already requested while streaming?
+
+Checked rather than assumed, on the device.
+
+**Already requested at runtime**, on the camera screen: `CAMERA`, `RECORD_AUDIO`,
+`POST_NOTIFICATIONS`. **Declared and used**: the three foreground-service types
+(camera, microphone, mediaPlayback), `WAKE_LOCK`, and the WiFi and multicast permissions.
+
+**Missing — and the Tecno proved it:**
+
+```
+dumpsys deviceidle whitelist → not in the list
+am get-standby-bucket        → 5   (RESTRICTED)
+```
+
+A foreground service plus a wake lock is the supported way to stay alive, and on stock Android
+it is enough. Outside the battery-optimisation exemption the app is still subject to Doze and
+to app-standby, and bucket 5 is Android already treating it as restricted — which is very
+likely part of why the camera died on lock.
+
+### Added: a background-access row, at the top of Settings
+
+`REQUEST_IGNORE_BATTERY_OPTIMIZATIONS` is now declared, and asked for from the settings screen
+rather than silently. The row sits above the role switcher, because it is neither a camera
+setting nor a viewer one, and it has three states:
+
+- **Granted** — plain card, "Allowed to run in the background".
+- **Restricted** — an error-coloured card, "Android may stop this app… streaming or watching
+  can stop minutes after the screen locks", with an **Allow** button opening the system dialog.
+  It re-reads every 1.5s, so it updates when the parent comes back from that dialog.
+- **No such setting** — plain card, "This device has no battery optimisation to turn off".
+
+### The television was showing a warning it could not act on
+
+**Your report:** the TV still shows the banner and the Allow button.
+
+**Cause:** Android TV *does* resolve `REQUEST_IGNORE_BATTERY_OPTIMIZATIONS` — to
+`com.android.tv.settings.EmptyStubActivity`, a deliberate no-op. A non-null resolution is
+therefore not evidence that anything will happen, and my check believed it.
+
+**Fix:** the question is skipped outright on a television — it is mains powered and has no
+battery optimisation — and any resolution landing on a stub activity is rejected as well, for
+TV-like boxes that do not report themselves as televisions. Verified on the emulator: the card
+now reads "Runs in the background · This device has no battery optimisation to turn off", with
+no button.
+
+### What no app can request
+
+The card also names the part Android does not govern: **Tecno/Infinix (HiOS), Huawei (EMUI),
+Xiaomi (MIUI)** and others keep their own app-killer lists — "Protected apps", "App launch",
+"Autostart" — and enforce them regardless of foreground services. There is no API for these by
+design, so the row says so and offers an **Open app settings** button that lands one tap away,
+rather than guessing at an OEM activity that may not exist.
+
+Where to find them:
+
+| Phone | Setting |
+|---|---|
+| Tecno / Infinix (HiOS) | Battery → Background app management, or Phone Master → App auto-launch |
+| Huawei (EMUI) | Battery → **App launch** → Manage manually → all three switches on |
+| Xiaomi (MIUI) | Apps → the app → Autostart, plus Battery saver → No restrictions |
+| Samsung | Battery → Background usage limits → remove from Sleeping apps |
+
+**Status:** granted on the Tecno. The Huawei still needs both the in-app Allow *and* EMUI's
+App launch, and it is the device used as the camera.
+
+---
+
 ## Needs a Mac — the complete iOS list
 
 Everything below is iOS-only and **none of it has been compiled**, because iOS targets cannot

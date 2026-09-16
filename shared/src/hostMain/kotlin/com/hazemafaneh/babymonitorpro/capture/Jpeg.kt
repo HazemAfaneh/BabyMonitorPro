@@ -8,3 +8,6 @@ expect fun encodeJpeg(argb: IntArray, width: Int, height: Int, quality: Int): By
 
 /** LAN addresses this device can be reached on. Never returns routable addresses. */
 expect fun localIpv4Addresses(): List<String>
+
+/** Every IPv4 address on this device, tailnet and VPN addresses included. */
+expect fun allIpv4Addresses(): List<String>

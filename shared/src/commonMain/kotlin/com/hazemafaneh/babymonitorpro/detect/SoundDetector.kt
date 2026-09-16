@@ -1,5 +1,6 @@
 package com.hazemafaneh.babymonitorpro.detect
 
+import kotlin.math.ln
 import kotlin.math.pow
 import kotlin.math.sqrt
 
@@ -80,6 +81,35 @@ class SoundDetector(
          * exponent puts the useful range in the middle of the slider, where a parent setting
          * it against the live meter can actually find it.
          */
+        /**
+         * The inverse of [thresholdFor]: the sensitivity at which a given level would fire.
+         *
+         * This is what turns the slider from a guess into a reading. A parent setting "alert
+         * me at 50%" has no idea whether the room they are standing in is a 20 or an 80 —
+         * the number is in units of nothing they can hear. Run the measurement back through
+         * the curve and it becomes a position on the same scale: *this* noise, the one
+         * happening right now, would raise an alert at 62% and above.
+         *
+         * Returns 0 for anything loud enough to fire even at the least sensitive setting, and
+         * 100 for anything below the most sensitive threshold there is.
+         */
+        fun sensitivityFor(level: Float): Float = when {
+            level >= MAX_THRESHOLD -> 0f
+            level <= MIN_THRESHOLD -> 100f
+            else -> (100f * ln(level / MAX_THRESHOLD) / ln(MIN_THRESHOLD / MAX_THRESHOLD))
+                .coerceIn(0f, 100f)
+        }
+
+        /**
+         * The room's loudness as 0..100, where louder is bigger.
+         *
+         * The scale everything user-facing speaks: the slider, the live mark, and the words
+         * on an alert. [sensitivityFor] runs the other way — it answers "how sensitive would
+         * you have to be" — and showing a parent a number that falls as the room gets louder
+         * is how a threshold ends up set backwards.
+         */
+        fun levelPercent(level: Float): Float = 100f - sensitivityFor(level)
+
         fun thresholdFor(sensitivity: Int): Float {
             val clamped = sensitivity.coerceIn(0, 100) / 100f
             return MAX_THRESHOLD * (MIN_THRESHOLD / MAX_THRESHOLD).pow(clamped)

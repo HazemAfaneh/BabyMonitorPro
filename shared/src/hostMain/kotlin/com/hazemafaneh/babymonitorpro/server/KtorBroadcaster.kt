@@ -7,10 +7,13 @@ import com.hazemafaneh.babymonitorpro.capture.isCameraAvailable
 import com.hazemafaneh.babymonitorpro.capture.isMicrophoneAvailable
 import com.hazemafaneh.babymonitorpro.capture.downscaleToGray
 import com.hazemafaneh.babymonitorpro.capture.hasMultipleCameras
+import com.hazemafaneh.babymonitorpro.capture.allIpv4Addresses
 import com.hazemafaneh.babymonitorpro.capture.localIpv4Addresses
+import com.hazemafaneh.babymonitorpro.discovery.Tailnet
 import com.hazemafaneh.babymonitorpro.client.ViewerClient
 import com.hazemafaneh.babymonitorpro.core.CameraEndpoint
 import com.hazemafaneh.babymonitorpro.core.nowMillis
+import com.hazemafaneh.babymonitorpro.core.readBattery
 import com.hazemafaneh.babymonitorpro.detect.MotionDetector
 import com.hazemafaneh.babymonitorpro.detect.SoundDetector
 import com.hazemafaneh.babymonitorpro.discovery.createAdvertiser
@@ -66,9 +69,16 @@ class KtorBroadcaster : Broadcaster {
     private val soundDetector = SoundDetector()
     private val _soundLevel = MutableStateFlow(0f)
     override val soundLevel: StateFlow<Float> = _soundLevel
+    private val _motionLevel = MutableStateFlow(0f)
+    override val motionLevel: StateFlow<Float> = _motionLevel
     private var videoJob: Job? = null
     private var audioJob: Job? = null
     private var startedAt: Long = 0
+
+    /** When a frame last arrived from the camera. The watchdog's only input. */
+    private var lastFrameAt: Long = 0
+
+    override var onRemoteSettings: ((ControlMessage.SetCameraSettings) -> Unit)? = null
 
     private val server = BroadcastServer(
         scope = scope,
@@ -95,20 +105,7 @@ class KtorBroadcaster : Broadcaster {
         soundDetector.reset()
 
         val synthetic = config.useSyntheticVideo || !isCameraAvailable()
-        videoJob = scope.launch {
-            val source = if (synthetic) {
-                SyntheticVideoSource(config.capture).frames
-            } else {
-                val controller = CameraController(config.capture)
-                camera = controller
-                controller.start()
-                controller.frames
-            }
-            source.collect { jpeg ->
-                frameFlow.emit(jpeg)
-                inspectForMotion(jpeg)
-            }
-        }
+        startVideo(config, synthetic)
 
         val micAvailable = isMicrophoneAvailable()
         if (micAvailable) {
@@ -134,7 +131,10 @@ class KtorBroadcaster : Broadcaster {
         _state.value = BroadcastState(
             running = true,
             viewerCount = 0,
-            addresses = localIpv4Addresses(),
+            // LAN addresses first, then any tailnet address this device holds. A parent
+            // pairing a device that will watch from outside the house needs the 100.x
+            // address, and it is not an address they can look up anywhere else on the phone.
+            addresses = localIpv4Addresses() + allIpv4Addresses().filter(Tailnet::isTailnetAddress),
             port = config.port,
             videoActive = true,
             audioActive = micAvailable,
@@ -147,6 +147,84 @@ class KtorBroadcaster : Broadcaster {
         publishBroadcastSession()
 
         scope.launch { verifyListening(config) }
+        lastFrameAt = nowMillis()
+        watchCapture(config, synthetic)
+
+        // A status every couple of seconds while broadcasting.
+        //
+        // Status used to be sent only when something changed, which is right for everything
+        // in it except the two live readings — and those are what a viewer's threshold
+        // sliders draw their marks from. Two seconds is slow enough to be invisible on the
+        // wire (one small JSON object per viewer) and quick enough that a mark moves while a
+        // parent is watching the room it describes.
+        scope.launch {
+            while (true) {
+                delay(LEVEL_BROADCAST_MILLIS)
+                if (!_state.value.running) continue
+                eventFlow.tryEmit(currentStatus())
+            }
+        }
+    }
+
+    /**
+     * Opens the camera and pumps its frames, and can be called again to reopen it.
+     *
+     * Separate from [start] because the camera is not ours to keep. Locking the nursery phone
+     * hands the whole camera stack to the system, and it comes back disconnected: the capture
+     * session is closed underneath CameraX, the frame flow simply stops, and nothing throws —
+     * the server goes on answering `/stream` with the last frame it had. That is the worst
+     * possible failure for a baby monitor, because a frozen picture of a sleeping baby looks
+     * exactly like a sleeping baby.
+     *
+     * So the pipeline is restartable, and [watchCapture] restarts it.
+     */
+    private fun startVideo(config: BroadcastConfig, synthetic: Boolean) {
+        videoJob = scope.launch {
+            val source = if (synthetic) {
+                SyntheticVideoSource(config.capture).frames
+            } else {
+                val controller = CameraController(config.capture)
+                camera = controller
+                controller.start()
+                controller.frames
+            }
+            source.collect { jpeg ->
+                lastFrameAt = nowMillis()
+                frameFlow.emit(jpeg)
+                inspectForMotion(jpeg)
+            }
+        }
+    }
+
+    /**
+     * Notices a camera that has stopped producing and opens it again.
+     *
+     * Frames stopping is not an error anyone reports — the flow just goes quiet — so the only
+     * way to know is to watch the clock. [CAPTURE_STALL_MILLIS] is several times the slowest
+     * frame interval the app offers, so a merely slow camera is never restarted; only a dead
+     * one is.
+     *
+     * Restarting means tearing the controller down and building a new one, because a
+     * disconnected CameraX session cannot be revived — rebinding to the same instance gets the
+     * same closed device back.
+     */
+    private fun watchCapture(config: BroadcastConfig, synthetic: Boolean) {
+        scope.launch {
+            while (true) {
+                delay(CAPTURE_CHECK_MILLIS)
+                val state = _state.value
+                if (!state.running || !state.videoActive) continue
+                if (nowMillis() - lastFrameAt < CAPTURE_STALL_MILLIS) continue
+
+                videoJob?.cancelAndJoin()
+                camera?.stop()
+                camera = null
+                // Marked before the restart, so a camera that takes a moment to open is not
+                // immediately declared stalled again.
+                lastFrameAt = nowMillis()
+                startVideo(config, synthetic)
+            }
+        }
     }
 
     /**
@@ -193,6 +271,7 @@ class KtorBroadcaster : Broadcaster {
         // A meter left holding the last level a stopped microphone heard is a meter that
         // says the room is noisy when nothing is listening to it.
         _soundLevel.value = 0f
+        _motionLevel.value = 0f
         videoJob?.cancelAndJoin()
         audioJob?.cancelAndJoin()
         videoJob = null
@@ -242,6 +321,10 @@ class KtorBroadcaster : Broadcaster {
 
     override fun setTorch(enabled: Boolean) {
         camera?.setTorch(enabled)
+        // Mirrored into the state so a viewer's torch switch shows what the room is actually
+        // doing rather than what it last asked for.
+        _state.update { it.copy(torchOn = enabled) }
+        eventFlow.tryEmit(currentStatus())
     }
 
     /**
@@ -267,7 +350,11 @@ class KtorBroadcaster : Broadcaster {
 
     private fun inspectForMotion(jpeg: ByteArray) {
         val gray = downscaleToGray(jpeg, DETECT_WIDTH, DETECT_HEIGHT) ?: return
-        if (motionDetector.submit(gray, nowMillis())) {
+        val fired = motionDetector.submit(gray, nowMillis())
+        // Published on every frame, not only on a firing one — the readings that did *not*
+        // raise an alert are exactly the ones a parent is setting the threshold against.
+        _motionLevel.value = motionDetector.lastRatio
+        if (fired) {
             eventFlow.tryEmit(
                 ControlMessage.MotionEvent(
                     atMillis = nowMillis(),
@@ -296,12 +383,72 @@ class KtorBroadcaster : Broadcaster {
     private fun handleControlMessage(message: ControlMessage) {
         when (message) {
             is ControlMessage.SetSensitivity -> setSensitivity(message.motion, message.sound)
+            is ControlMessage.SetCameraSettings -> applyRemoteSettings(message)
             else -> Unit
         }
     }
 
+    /**
+     * A viewer changing this camera's settings from the other end of the house.
+     *
+     * Null means "leave it alone", so a parent turning the torch on does not have to restate
+     * the sensitivity they set last week. Everything that can be applied without touching the
+     * capture pipeline is applied immediately; geometry and frame rate need the camera
+     * rebound, which is a second of black picture, so they are done last and only when they
+     * actually changed.
+     *
+     * Every path ends in a fresh Status to *all* viewers, because two parents watching the
+     * same cot must not disagree about which way the lens is pointing.
+     */
+    private fun applyRemoteSettings(message: ControlMessage.SetCameraSettings) {
+        val current = config ?: return
+
+        // Persisted before it is applied, so a change survives the restart that some of these
+        // require — and so this device's own settings screen agrees with what the parent just
+        // did from the other room.
+        onRemoteSettings?.invoke(message)
+
+        if (message.motionSensitivity != null || message.soundSensitivity != null) {
+            setSensitivity(
+                message.motionSensitivity ?: _state.value.motionSensitivity,
+                message.soundSensitivity ?: _state.value.soundSensitivity,
+            )
+        }
+        message.useFrontCamera?.let { wanted ->
+            if (wanted != _state.value.usingFrontCamera) switchCamera()
+        }
+        message.torchOn?.let { wanted ->
+            setTorch(wanted)
+            _state.update { it.copy(torchOn = wanted) }
+        }
+
+        val renamed = message.deviceName?.takeIf { it.isNotBlank() && it != current.deviceName }
+        val capture = current.capture
+        val geometry = capture.copy(
+            width = message.videoWidth ?: capture.width,
+            height = message.videoHeight ?: capture.height,
+            fps = message.frameRate ?: capture.fps,
+            // Keep whichever lens is live now, not the one the config was built with.
+            useFrontCamera = _state.value.usingFrontCamera,
+        )
+
+        if (geometry != capture || renamed != null) {
+            // A restart, because capture geometry is fixed when the camera binds and the
+            // advertised name is fixed when mDNS registers. The viewer that asked for this
+            // knows a blink is coming; the others get their Status either way.
+            scope.launch {
+                start(current.copy(deviceName = renamed ?: current.deviceName, capture = geometry))
+            }
+            return
+        }
+
+        eventFlow.tryEmit(currentStatus())
+    }
+
     private fun currentStatus(): ControlMessage.Status {
         val snapshot = _state.value
+        val battery = readBattery()
+        val capture = config?.capture
         return ControlMessage.Status(
             deviceName = config?.deviceName ?: "Camera",
             viewerCount = snapshot.viewerCount,
@@ -310,17 +457,33 @@ class KtorBroadcaster : Broadcaster {
             motionSensitivity = snapshot.motionSensitivity,
             soundSensitivity = snapshot.soundSensitivity,
             uptimeMillis = if (startedAt == 0L) 0 else nowMillis() - startedAt,
+            // Read fresh on every status rather than cached: a status is sent on connect and
+            // whenever something changes, which is exactly when a viewer wants a current
+            // number — and reading a battery percentage costs a system property lookup.
+            batteryPercent = battery.percent,
+            charging = battery.charging,
+            usingFrontCamera = snapshot.usingFrontCamera,
+            canSwitchCamera = snapshot.canSwitchCamera,
+            torchOn = snapshot.torchOn,
+            videoWidth = capture?.width ?: 1280,
+            videoHeight = capture?.height ?: 720,
+            frameRate = capture?.fps ?: 12,
+            soundLevel = if (snapshot.audioActive) _soundLevel.value else -1f,
+            motionLevel = if (snapshot.videoActive) _motionLevel.value else -1f,
         )
     }
 
     private fun currentInfo(): DeviceInfoResponse {
         val current = config
+        val battery = readBattery()
         return DeviceInfoResponse(
             deviceName = current?.deviceName ?: "Camera",
             streaming = _state.value.running,
             videoWidth = current?.capture?.width ?: 1280,
             videoHeight = current?.capture?.height ?: 720,
             audioSampleRate = current?.audio?.sampleRate ?: 16_000,
+            batteryPercent = battery.percent,
+            charging = battery.charging,
         )
     }
 
@@ -332,6 +495,16 @@ class KtorBroadcaster : Broadcaster {
         const val LOOPBACK = "127.0.0.1"
         const val SELF_CHECK_TIMEOUT_MILLIS = 5_000L
         const val SELF_CHECK_RETRY_MILLIS = 250L
+        const val LEVEL_BROADCAST_MILLIS = 2_000L
+
+        /**
+         * Six seconds without a frame is a dead camera. The slowest rate the app offers is
+         * 8 fps, so this is roughly fifty missed frames — far outside anything a working
+         * camera does, and quick enough that a parent glancing over sees a picture rather
+         * than a still.
+         */
+        const val CAPTURE_STALL_MILLIS = 6_000L
+        const val CAPTURE_CHECK_MILLIS = 2_000L
     }
 }
 

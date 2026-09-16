@@ -179,7 +179,7 @@ What it shows:
 |---|---|---|
 | Title | camera name | device name |
 | Headline | the last alert, else the connection state | `Broadcasting · 3 watching` |
-| Caption | connection state, when an alert took the headline | `192.168.1.24:8080` |
+| Caption | connection state, when an alert took the headline | `192.168.1.24:47821` |
 
 Zero viewers is printed as "nobody watching" rather than hidden: a count that disappears
 reads as a broken count. An alert replaces the previous one instead of stacking, because the

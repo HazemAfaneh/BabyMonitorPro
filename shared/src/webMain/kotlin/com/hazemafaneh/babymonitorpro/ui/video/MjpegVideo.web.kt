@@ -58,6 +58,7 @@ private external val document: DomDocument
 actual fun MjpegVideo(
     endpoint: CameraEndpoint,
     modifier: Modifier,
+    maxFps: Int?,
     onStatus: (VideoStatus) -> Unit,
     onFrame: (Long) -> Unit,
     onError: (String?) -> Unit,
@@ -72,7 +73,14 @@ actual fun MjpegVideo(
     var width by remember { mutableStateOf(0f) }
     var height by remember { mutableStateOf(0f) }
 
-    val url = remember(endpoint.id) { "${endpoint.baseUrl}${Bmp.PATH_STREAM}" }
+    // The browser decodes the multipart stream itself, so the rate can only be asked for —
+    // which is exactly what the query parameter is for.
+    val url = remember(endpoint.id, maxFps) {
+        buildString {
+            append(endpoint.baseUrl).append(Bmp.PATH_STREAM)
+            if (maxFps != null) append('?').append(Bmp.QUERY_FPS).append('=').append(maxFps)
+        }
+    }
 
     val element = remember(url) {
         document.createElement("img").also { image ->

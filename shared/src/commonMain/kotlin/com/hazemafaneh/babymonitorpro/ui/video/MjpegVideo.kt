@@ -26,6 +26,14 @@ enum class VideoStatus { CONNECTING, LIVE, RECONNECTING, NO_PICTURE, FAILED }
 expect fun MjpegVideo(
     endpoint: CameraEndpoint,
     modifier: Modifier,
+    /**
+     * The most frames per second to ask the camera for, or null for everything it has.
+     *
+     * Requested of the camera rather than thrown away here: a frame discarded by the viewer
+     * has already crossed the network and cost the data it was going to cost. Set by the
+     * data-saver setting, for a parent watching from somewhere that is not the house.
+     */
+    maxFps: Int?,
     onStatus: (VideoStatus) -> Unit,
     onFrame: (Long) -> Unit,
     /**

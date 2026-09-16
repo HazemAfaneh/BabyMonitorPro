@@ -75,6 +75,24 @@ class MotionDetector(
         const val MIN_THRESHOLD = 0.005f
         const val MAX_THRESHOLD = 0.20f
 
+        /**
+         * The inverse of [thresholdFor]: the sensitivity at which a given amount of change
+         * would fire.
+         *
+         * Same job as the sound one — it turns "12% of the picture changed" into the number
+         * the slider is actually asking for, so a parent can set the threshold against the
+         * movement they just watched happen rather than against an abstraction.
+         */
+        fun sensitivityFor(ratio: Float): Float = when {
+            ratio >= MAX_THRESHOLD -> 0f
+            ratio <= MIN_THRESHOLD -> 100f
+            else -> (100f * (MAX_THRESHOLD - ratio) / (MAX_THRESHOLD - MIN_THRESHOLD))
+                .coerceIn(0f, 100f)
+        }
+
+        /** How much of the picture is moving, as 0..100, where more movement is bigger. */
+        fun levelPercent(ratio: Float): Float = 100f - sensitivityFor(ratio)
+
         fun thresholdFor(sensitivity: Int): Float {
             val clamped = sensitivity.coerceIn(0, 100) / 100f
             return MAX_THRESHOLD - (MAX_THRESHOLD - MIN_THRESHOLD) * clamped

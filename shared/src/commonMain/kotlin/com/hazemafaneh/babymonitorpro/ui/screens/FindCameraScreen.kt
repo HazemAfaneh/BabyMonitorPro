@@ -11,6 +11,11 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.layout.width
@@ -25,6 +30,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -51,9 +57,13 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.BorderStroke
+import com.hazemafaneh.babymonitorpro.core.Bmp
 import com.hazemafaneh.babymonitorpro.core.CameraEndpoint
 import com.hazemafaneh.babymonitorpro.core.PairingUri
 import com.hazemafaneh.babymonitorpro.core.isLinkLocalIpv4
+import com.hazemafaneh.babymonitorpro.client.CameraProbe
+import com.hazemafaneh.babymonitorpro.discovery.Tailnet
+import com.hazemafaneh.babymonitorpro.discovery.allLocalIpv4Addresses
 import com.hazemafaneh.babymonitorpro.discovery.createBrowser
 import com.hazemafaneh.babymonitorpro.discovery.ownLanAddresses
 import com.hazemafaneh.babymonitorpro.store.AppSettings
@@ -106,6 +116,45 @@ fun FindCameraScreen(
     // empty will happily go on saying so.
     var discoveryRound by remember { mutableStateOf(0) }
     val browser = remember(discoveryRound) { createBrowser() }
+
+    // Tailscale, and any other VPN that carries no multicast.
+    //
+    // mDNS cannot reach a tailnet at all — it is a mesh of point-to-point tunnels, and
+    // multicast has nowhere to go — so a camera reachable over Tailscale can never appear in
+    // the browser's results however well it is working. It is found by asking instead: a
+    // bounded probe of the neighbouring tailnet addresses on this app's own port. It runs
+    // only when this device actually holds a 100.64.0.0/10 address, so a phone with no VPN
+    // never sends a packet it did not before.
+    var tailnetCameras by remember(discoveryRound) { mutableStateOf<List<CameraEndpoint>>(emptyList()) }
+    var tailnetScanning by remember(discoveryRound) { mutableStateOf(false) }
+    val ownAddresses = remember(discoveryRound) { allLocalIpv4Addresses() }
+    val onTailnet = remember(ownAddresses) { ownAddresses.any(Tailnet::isTailnetAddress) }
+
+    LaunchedEffect(discoveryRound, onTailnet) {
+        if (!onTailnet) return@LaunchedEffect
+        val candidates = Tailnet.candidates(
+            ownAddresses = ownAddresses,
+            // Where a camera has actually been reached before. Worth more than any guess
+            // about how Tailscale allocates.
+            knownHosts = settings.recentCameras.map { it.host },
+        )
+        if (candidates.isEmpty()) return@LaunchedEffect
+        tailnetScanning = true
+        val probe = CameraProbe()
+        try {
+            // The port the camera settings on *this* device use, because a household that
+            // moved the port moved it everywhere.
+            tailnetCameras = probe.probe(
+                hosts = candidates,
+                // This device's port first, then the default, then the port older builds
+                // used — a household mid-upgrade has one of each.
+                ports = listOf(settings.port, Bmp.DEFAULT_PORT, Bmp.LEGACY_PORT),
+            )
+        } finally {
+            probe.close()
+            tailnetScanning = false
+        }
+    }
     val announced by remember(browser) {
         browser?.cameras ?: MutableStateFlow(emptyList<CameraEndpoint>())
     }.collectAsState()
@@ -176,6 +225,14 @@ fun FindCameraScreen(
             .fillMaxSize()
             .background(MaterialTheme.colorScheme.background)
             .safeDrawingPadding()
+            // Room for the keyboard.
+            //
+            // Without this the IME simply covers the bottom of the screen — and the bottom of
+            // this screen is the Connect button, directly under the field being typed into.
+            // The parent types an address and then cannot reach the one control that uses it.
+            // It is worst on a television, where the leanback keyboard is enormous, but it
+            // happens on a phone in landscape too.
+            .imePadding()
             .verticalScroll(rememberScrollState())
             .padding(horizontal = window.gutter()),
         horizontalAlignment = Alignment.CenterHorizontally,
@@ -268,6 +325,85 @@ fun FindCameraScreen(
                 }
             }
 
+            if (onTailnet) {
+                Spacer(Modifier.height(Space.sm))
+                DiscoveryCard(
+                    meta = when {
+                        tailnetScanning -> "scanning…"
+                        tailnetCameras.isEmpty() -> "tailnet · none found"
+                        tailnetCameras.size == 1 -> "1 found"
+                        else -> "${tailnetCameras.size} found"
+                    },
+                    title = "Over Tailscale",
+                    onRefresh = { discoveryRound++ },
+                ) {
+                    when {
+                        tailnetScanning -> EmptyNote(
+                            title = "Asking your tailnet",
+                            note = "Checking the addresses next to this device for a camera. " +
+                                "This takes a few seconds.",
+                        )
+
+                        tailnetCameras.isEmpty() -> EmptyNote(
+                            icon = BmpIcons.House,
+                            title = "Nothing answered",
+                            note = "The nursery device has to be on the same tailnet and " +
+                                "broadcasting. If it is, open it once by address and it will " +
+                                "be waiting under Recently connected next time.",
+                        )
+
+                        else -> Column(verticalArrangement = Arrangement.spacedBy(ROW_GAP)) {
+                            tailnetCameras.forEachIndexed { index, camera ->
+                                DiscoveredRow(
+                                    camera = camera,
+                                    highlighted = index == 0,
+                                    onClick = { onConnect(camera) },
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Everything mDNS cannot reach, which is not an edge case: a tailnet carries no
+            // multicast at all, so a camera reachable over Tailscale can never be discovered,
+            // however well the network is working. This list is how that camera gets opened
+            // — one tap, with the name it announced rather than the address it lives at.
+            val recents = remember { settings.recentCameras }
+            if (recents.isNotEmpty()) {
+                Spacer(Modifier.height(Space.sm))
+                DiscoveryCard(
+                    meta = if (recents.size == 1) "1 camera" else "${recents.size} cameras",
+                    title = "Recently connected",
+                    // Nothing to refresh: this list is memory, not a search.
+                    onRefresh = null,
+                ) {
+                    Column(verticalArrangement = Arrangement.spacedBy(ROW_GAP)) {
+                        for (camera in recents) {
+                            DiscoveredRow(
+                                camera = CameraEndpoint(
+                                    name = camera.name,
+                                    host = camera.host,
+                                    port = camera.port,
+                                    source = CameraEndpoint.Source.MANUAL,
+                                ),
+                                highlighted = false,
+                                onClick = {
+                                    onConnect(
+                                        CameraEndpoint(
+                                            name = camera.name,
+                                            host = camera.host,
+                                            port = camera.port,
+                                            source = CameraEndpoint.Source.MANUAL,
+                                        ),
+                                    )
+                                },
+                            )
+                        }
+                    }
+                }
+            }
+
             Spacer(Modifier.height(Space.sm))
 
             if (showManual) {
@@ -285,7 +421,7 @@ fun FindCameraScreen(
                             // Show the shape wanted. "That does not look like an address"
                             // tells a tired parent nothing they can act on.
                             error = "That is not a full address. It should look like " +
-                                "192.168.1.42, or 192.168.1.42:8080 if the port was changed."
+                                "192.168.1.42, a name like nursery.tailnet.ts.net, or either with :port."
                         } else {
                             settings.lastManualHost = manualHost
                             onConnect(
@@ -357,6 +493,7 @@ fun FindCameraScreen(
 private fun DiscoveryCard(
     meta: String,
     onRefresh: (() -> Unit)?,
+    title: String = "On this network",
     content: @Composable () -> Unit,
 ) {
     Surface(
@@ -371,7 +508,7 @@ private fun DiscoveryCard(
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                SectionLabel("On this network")
+                SectionLabel(title)
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     // How the search works, stated rather than implied. A parent who wonders
                     // whether this app is scanning the internet gets the answer in the corner
@@ -621,6 +758,15 @@ private fun ManualCard(
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 OutlinedTextField(
+                    keyboardOptions = KeyboardOptions(
+                        keyboardType = KeyboardType.Uri,
+                        // Go, not Done: the keyboard's own action connects, so a parent who
+                        // has just typed an address never has to find a button at all — and
+                        // on a remote, pressing the middle button after typing does the
+                        // obvious thing.
+                        imeAction = ImeAction.Go,
+                    ),
+                    keyboardActions = KeyboardActions(onGo = { onConnect() }),
                     value = host,
                     onValueChange = onHostChange,
                     placeholder = { Text("192.168.1.42") },

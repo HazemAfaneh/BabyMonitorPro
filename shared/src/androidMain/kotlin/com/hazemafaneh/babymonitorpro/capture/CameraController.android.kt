@@ -174,15 +174,46 @@ actual class CameraController actual constructor(private val config: CaptureConf
         useCase.setAnalyzer(analysisExecutor) { image -> onImage(image) }
         analysis = useCase
 
-        val selector = CameraSelector.Builder().requireLensFacing(lensFacing).build()
-        camera = runCatching {
-            cameraProvider.bindToLifecycle(lifecycleOwner, selector, useCase)
-        }.onFailure {
-            // Swallowing this silently makes a dead camera indistinguishable from a working
-            // one: the server still answers /stream, just with a body that never produces
-            // a byte, and every viewer blames its own decoder.
-            Log.e(TAG, "CameraX bindToLifecycle failed; no video will be produced", it)
-        }.getOrNull()
+        // The requested lens, then the other one, then whatever this device has.
+        //
+        // Asking for a lens the device does not have throws `No available camera can be
+        // found`, and the failure is silent in every way that matters: the server still
+        // answers /stream, with a body that never produces a byte, and the camera screen sits
+        // on "Starting" forever while the parent waits for a picture that cannot arrive.
+        //
+        // Plenty of hardware has one camera — tablets, TV boxes, an old handset with a broken
+        // front module — and the app defaults to the front lens. On any of them this was the
+        // difference between a working monitor and a dead one, for a preference that does not
+        // matter nearly as much as having a picture at all.
+        val preferred = CameraSelector.Builder().requireLensFacing(lensFacing).build()
+        val fallbackLens = if (lensFacing == CameraSelector.LENS_FACING_FRONT) {
+            CameraSelector.LENS_FACING_BACK
+        } else {
+            CameraSelector.LENS_FACING_FRONT
+        }
+        val alternatives = listOf(
+            preferred,
+            CameraSelector.Builder().requireLensFacing(fallbackLens).build(),
+            // No lens requirement at all: bind to whatever exists.
+            CameraSelector.Builder().build(),
+        )
+
+        camera = alternatives.firstNotNullOfOrNull { selector ->
+            runCatching { cameraProvider.bindToLifecycle(lifecycleOwner, selector, useCase) }
+                .onFailure { Log.w(TAG, "Lens unavailable, trying the next selector", it) }
+                .getOrNull()
+        }
+
+        if (camera == null) {
+            // Everything failed, which means there is genuinely no camera here. Said loudly,
+            // because a silent one is indistinguishable from a working camera pointed at a
+            // dark room.
+            Log.e(TAG, "No camera could be bound; no video will be produced")
+        } else if (camera?.cameraInfo?.lensFacing != lensFacing) {
+            // The picture is coming from the other lens. Mirrored back into the flag so the
+            // camera screen and the viewer's remote controls both say which one is live.
+            lensFacing = camera?.cameraInfo?.lensFacing ?: lensFacing
+        }
     }
 
     private fun onImage(image: ImageProxy) {
@@ -303,8 +334,45 @@ actual fun hasMultipleCameras(): Boolean {
         packages.hasSystemFeature(PackageManager.FEATURE_CAMERA)
 }
 
+/**
+ * Whether this device can actually record.
+ *
+ * The feature flag alone is not enough, and that is not a theoretical worry: an Android TV
+ * box declares no `FEATURE_MICROPHONE` at all — a television has no built-in mic — while
+ * quite happily recording from a USB or virtual input. The old check believed the flag, so
+ * every viewer was told "this camera has no microphone available" about a camera whose
+ * microphone worked.
+ *
+ * So the flag is treated as a hint, and the fallback is to ask the audio system directly:
+ * build an AudioRecord at the configured format and see whether it initialises. That is the
+ * only question that matters, it costs a few milliseconds, and it is asked once per broadcast
+ * rather than per chunk.
+ */
 actual fun isMicrophoneAvailable(): Boolean {
     val context = AndroidPlatformContext.applicationContext ?: return false
-    val hasHardware = context.packageManager.hasSystemFeature(PackageManager.FEATURE_MICROPHONE)
-    return hasHardware && hasPermission(Manifest.permission.RECORD_AUDIO)
+    if (!hasPermission(Manifest.permission.RECORD_AUDIO)) return false
+    if (context.packageManager.hasSystemFeature(PackageManager.FEATURE_MICROPHONE)) return true
+    return canOpenMicrophone()
 }
+
+/** Opens a recorder, asks whether it came up, and closes it again. */
+private fun canOpenMicrophone(): Boolean = runCatching {
+    val config = AudioConfig()
+    val minimum = AudioRecord.getMinBufferSize(
+        config.sampleRate,
+        AudioFormat.CHANNEL_IN_MONO,
+        AudioFormat.ENCODING_PCM_16BIT,
+    )
+    if (minimum <= 0) return@runCatching false
+    @Suppress("MissingPermission")
+    val probe = AudioRecord(
+        MediaRecorder.AudioSource.MIC,
+        config.sampleRate,
+        AudioFormat.CHANNEL_IN_MONO,
+        AudioFormat.ENCODING_PCM_16BIT,
+        maxOf(minimum, config.chunkBytes * 4),
+    )
+    val ready = probe.state == AudioRecord.STATE_INITIALIZED
+    probe.release()
+    ready
+}.getOrDefault(false)

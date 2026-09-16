@@ -32,6 +32,8 @@ data class BroadcastState(
     val usingFrontCamera: Boolean = true,
     /** False when the device has only one lens; the switch control is then hidden. */
     val canSwitchCamera: Boolean = false,
+    /** Whether the torch is lit, so a viewer's remote switch can show the truth. */
+    val torchOn: Boolean = false,
     val motionSensitivity: Int = 50,
     val soundSensitivity: Int = 50,
     val lastError: String? = null,
@@ -88,6 +90,16 @@ interface Broadcaster {
      */
     val soundLevel: StateFlow<Float>
 
+    /**
+     * How much of the picture changed between the last two frames, 0..1 — what the room
+     * *looks* like right now, whether or not it was enough to raise an alert.
+     *
+     * The mirror of [soundLevel], and for the same reason: a movement threshold set against a
+     * number with no units is set by guesswork. Published on every frame, which is a dozen
+     * times a second, so it is a StateFlow rather than part of the broadcast state.
+     */
+    val motionLevel: StateFlow<Float>
+
     suspend fun start(config: BroadcastConfig)
     suspend fun stop()
 
@@ -105,6 +117,17 @@ interface Broadcaster {
      * composition's scope, so a `launch { stop() }` there would never run.
      */
     fun requestStop()
+
+    /**
+     * Called with whatever a *viewer* just changed, so the camera device can remember it.
+     *
+     * Without this, remote changes lived only in the running broadcaster: the nursery
+     * device's own settings screen went on showing the old values, and the next start read
+     * them back from storage and undid everything the parent had set from the other room.
+     * The camera screen is the one place that can write this device's settings, so the hook
+     * belongs to it rather than to the server.
+     */
+    var onRemoteSettings: ((ControlMessage.SetCameraSettings) -> Unit)?
 
     fun setSensitivity(motion: Int, sound: Int)
     fun switchCamera()

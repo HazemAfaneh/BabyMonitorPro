@@ -33,9 +33,9 @@ class PairingUriTest {
 
     @Test
     fun manualEntryAcceptsHostWithAndWithoutPort() {
-        assertEquals("192.168.1.42" to 8080, PairingUri.parseHostPort("192.168.1.42"))
+        assertEquals("192.168.1.42" to Bmp.DEFAULT_PORT, PairingUri.parseHostPort("192.168.1.42"))
         assertEquals("192.168.1.42" to 9000, PairingUri.parseHostPort("192.168.1.42:9000"))
-        assertEquals("nursery.local" to 8080, PairingUri.parseHostPort(" nursery.local/ "))
+        assertEquals("nursery.local" to Bmp.DEFAULT_PORT, PairingUri.parseHostPort(" nursery.local/ "))
         assertNull(PairingUri.parseHostPort("192.168.1.42:notaport"))
         assertNull(PairingUri.parseHostPort("192.168.1.42:70000"))
     }

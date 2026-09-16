@@ -15,6 +15,7 @@ import com.hazemafaneh.babymonitorpro.core.DeepLinks
 import com.hazemafaneh.babymonitorpro.core.Role
 import com.hazemafaneh.babymonitorpro.di.appModule
 import com.hazemafaneh.babymonitorpro.store.AppSettings
+import com.hazemafaneh.babymonitorpro.store.StartupRole
 import com.hazemafaneh.babymonitorpro.ui.Routes
 import com.hazemafaneh.babymonitorpro.ui.screens.CameraScreen
 import com.hazemafaneh.babymonitorpro.ui.screens.FindCameraScreen
@@ -70,6 +71,30 @@ fun App() {
                 // once off one camera. The endpoint lives in [target] rather than the route,
                 // so reusing the entry still switches cameras.
                 navController.navigate(Routes.LIVE) { launchSingleTop = true }
+            }
+
+            // The device's standing job, if it has one.
+            //
+            // Once, on the first composition, and never again: this is about opening the app,
+            // not about every recomposition. A deep link wins — an alert being tapped is a
+            // more specific instruction than a preference set last week — so it is checked
+            // first and the effect simply stands down.
+            // Snapshotted before any effect runs, not read inside one.
+            //
+            // Both this and the deep-link handler start on the first composition, and the
+            // deep-link handler *consumes* the pending link as it navigates. Reading the
+            // pending value inside this effect was therefore a race it lost roughly always:
+            // the link opened the live view, this saw an empty pending and pushed Find on
+            // top of it. A tapped alert ended up showing the camera list.
+            val arrivedByLink = remember { DeepLinks.pending.value != null }
+
+            LaunchedEffect(Unit) {
+                if (arrivedByLink) return@LaunchedEffect
+                when (settings.startupRole) {
+                    StartupRole.ASK -> Unit
+                    StartupRole.CAMERA -> navController.navigate(Routes.CAMERA)
+                    StartupRole.VIEWER -> navController.navigate(Routes.FIND)
+                }
             }
 
             NavHost(navController = navController, startDestination = Routes.ROLE) {

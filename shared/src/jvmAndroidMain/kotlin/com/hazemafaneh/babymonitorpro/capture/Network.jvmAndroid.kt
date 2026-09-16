@@ -40,3 +40,25 @@ private fun interfaceRank(name: String): Int = when {
     name.startsWith("eth") -> 1
     else -> 2
 }
+
+/**
+ * Every IPv4 address on every live interface, unfiltered and unranked.
+ *
+ * Separate from [localIpv4Addresses] because the two answer different questions. That one
+ * asks "what may I print on the pairing card", which must be a private LAN address. This one
+ * asks "what networks is this device actually on", and the answer includes the 100.64.0.0/10
+ * address Tailscale assigns — the address that makes a tailnet probe possible, and the one
+ * the LAN filter was throwing away.
+ */
+actual fun allIpv4Addresses(): List<String> = runCatching {
+    NetworkInterface.getNetworkInterfaces()
+        .asSequence()
+        .filter { it.isUp && !it.isLoopback }
+        .flatMap { networkInterface ->
+            networkInterface.inetAddresses.asSequence().filterIsInstance<Inet4Address>()
+        }
+        .mapNotNull { it.hostAddress }
+        .distinct()
+        .toList()
+}.getOrDefault(emptyList())
+

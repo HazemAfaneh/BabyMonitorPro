@@ -13,3 +13,15 @@ package com.hazemafaneh.babymonitorpro.discovery
  * filter.
  */
 expect fun ownLanAddresses(): Set<String>
+
+/**
+ * Every IPv4 address on this device, including the ones [ownLanAddresses] deliberately drops.
+ *
+ * [ownLanAddresses] is filtered to RFC1918, because that is what the pairing card may offer.
+ * A Tailscale address is **not** RFC1918 — it comes from the carrier-grade NAT range
+ * 100.64.0.0/10 — so it was invisible to every part of this app, which is why a tailnet was
+ * invisible too. This is the unfiltered list, used only to work out which networks are worth
+ * probing.
+ */
+expect fun allLocalIpv4Addresses(): List<String>
+

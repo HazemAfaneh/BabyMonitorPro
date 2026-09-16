@@ -84,6 +84,80 @@ class AppSettings(private val store: KeyValueStore) {
         set(value) = store.putString(KEY_LISTEN_ON_ALERT, value.name)
 
     /**
+     * Which screen the app opens on.
+     *
+     * A household device has one job. The phone that lives in the nursery is *always* the
+     * camera; the tablet in the kitchen is *always* watching — and both of them were asking
+     * the same question every single launch, in the middle of the night, of someone holding a
+     * baby. [StartupRole.ASK] stays the default because a fresh install genuinely does not
+     * know yet, but any device that has settled into a job can say so once.
+     */
+    var startupRole: StartupRole
+        get() = store.getString(KEY_STARTUP_ROLE)
+            ?.let { name -> StartupRole.entries.firstOrNull { it.name == name } }
+            ?: StartupRole.ASK
+        set(value) = store.putString(KEY_STARTUP_ROLE, value.name)
+
+    /**
+     * Cameras this device has watched before, newest first.
+     *
+     * This is the only way to reach a camera that mDNS cannot find, and that is not an edge
+     * case: **a tailnet carries no multicast**, so a camera reachable over Tailscale is
+     * invisible to discovery by construction, no matter how well the WiFi works. The same is
+     * true of a guest network, a mesh with client isolation, or any router that filters
+     * mDNS. Remembering what worked before turns "type an address you have to look up
+     * somewhere else" into one tap.
+     *
+     * Stored as `host|port|name` per line, because this is a KeyValueStore of strings and a
+     * list of at most six entries does not justify a serialiser. Host and port are
+     * pipe-free by construction; the name is sanitised on the way in.
+     */
+    var recentCameras: List<RecentCamera>
+        get() = store.getString(KEY_RECENTS)
+            .orEmpty()
+            .lineSequence()
+            .mapNotNull(RecentCamera::parse)
+            .toList()
+        set(value) {
+            val text = value.take(MAX_RECENTS).joinToString("\n", transform = RecentCamera::encode)
+            if (text.isBlank()) store.remove(KEY_RECENTS) else store.putString(KEY_RECENTS, text)
+        }
+
+    /**
+     * Records a camera that actually worked, newest first, de-duplicated by host and port.
+     *
+     * Called when a viewer connects rather than when one is offered, because the list is
+     * meant to answer "where have I successfully watched from" — an address that refused is
+     * not worth offering again tomorrow.
+     */
+    fun rememberCamera(name: String, host: String, port: Int, atMillis: Long) {
+        val entry = RecentCamera(name = name, host = host, port = port, lastSeenMillis = atMillis)
+        recentCameras = listOf(entry) + recentCameras.filterNot {
+            it.host == host && it.port == port
+        }
+    }
+
+    fun forgetCamera(host: String, port: Int) {
+        recentCameras = recentCameras.filterNot { it.host == host && it.port == port }
+    }
+
+    /**
+     * The most frames per second to ask a camera for, or null for everything it sends.
+     *
+     * For watching from outside the house — over Tailscale from work, say — where the video
+     * is coming out of a mobile data plan. MJPEG sends a whole picture per frame, so the
+     * saving is very nearly linear: 2 fps is a sixth of the data of 12, and for "is the baby
+     * still asleep" two frames a second is plenty.
+     *
+     * Null on the same WiFi, where the bandwidth is free and the smoothness is worth having.
+     */
+    var dataSaverFps: Int?
+        get() = store.getInt(KEY_DATA_SAVER_FPS, 0).takeIf { it > 0 }
+        set(value) {
+            if (value == null) store.remove(KEY_DATA_SAVER_FPS) else store.putInt(KEY_DATA_SAVER_FPS, value)
+        }
+
+    /**
      * Whether the live view holds the screen on.
      *
      * On by default, which is what a monitor propped on a bedside table needs. A parent
@@ -128,9 +202,9 @@ class AppSettings(private val store: KeyValueStore) {
     /**
      * The port the camera listens on.
      *
-     * Settable because 8080 is a popular port — a dev server, a router's own admin page, a
-     * second copy of this app — and the camera screen's one-tap "try 8081 instead" only
-     * survives until the next start. This is where that choice becomes permanent.
+     * The default moved off 8080 to 47821, which nothing else is likely to want. It stays
+     * settable anyway: the camera screen's one-tap "try the next port" only survives until
+     * the next start, and this is where that choice becomes permanent.
      */
     var port: Int
         get() = store.getInt(KEY_PORT, Bmp.DEFAULT_PORT).coerceIn(1024, 65535)
@@ -180,6 +254,12 @@ class AppSettings(private val store: KeyValueStore) {
         /** The single switch these two replaced. Read only, and only as a default. */
         const val KEY_LEGACY_ALERTS = "alert_notifications"
         const val KEY_LISTEN_ON_ALERT = "listen_on_alert"
+        const val KEY_DATA_SAVER_FPS = "data_saver_fps"
+        const val KEY_RECENTS = "recent_cameras"
+        const val KEY_STARTUP_ROLE = "startup_role"
+
+        /** Six. Long enough for a house with two cameras and a tailnet address or two. */
+        const val MAX_RECENTS = 6
         const val KEY_KEEP_AWAKE = "keep_screen_awake"
         const val KEY_FRONT_CAMERA = "use_front_camera"
         const val KEY_VIDEO_HEIGHT = "video_height"
@@ -189,9 +269,28 @@ class AppSettings(private val store: KeyValueStore) {
         val ALL_KEYS = listOf(
             KEY_ROLE, KEY_DEVICE_NAME, KEY_MOTION, KEY_SOUND, KEY_NIGHT_MODE, KEY_LAST_HOST,
             KEY_START_WITH_SOUND, KEY_MOTION_ALERTS, KEY_SOUND_ALERTS, KEY_LEGACY_ALERTS,
-            KEY_LISTEN_ON_ALERT, KEY_KEEP_AWAKE, KEY_FRONT_CAMERA, KEY_VIDEO_HEIGHT, KEY_FPS, KEY_PORT,
+            KEY_LISTEN_ON_ALERT, KEY_DATA_SAVER_FPS, KEY_RECENTS, KEY_STARTUP_ROLE,
+            KEY_KEEP_AWAKE, KEY_FRONT_CAMERA, KEY_VIDEO_HEIGHT, KEY_FPS, KEY_PORT,
         )
     }
+}
+
+/**
+ * What the app does when it opens.
+ *
+ * Deliberately three states rather than a pair of switches. Two toggles can both be on, and
+ * "open as the camera AND open watching" has no meaning — a device can only do one of them
+ * first. One choice of three cannot express the contradiction.
+ */
+enum class StartupRole(val label: String, val description: String) {
+    /** Show the role picker. The right answer for a device that does both. */
+    ASK("Ask me", "Opens on the Monitor tab and lets you choose"),
+
+    /** Straight to the camera screen. For the phone that lives in the nursery. */
+    CAMERA("Camera", "Opens broadcasting, for the phone that stays in the nursery"),
+
+    /** Straight to Find a camera. For the tablet or television that only ever watches. */
+    VIEWER("Watching", "Opens looking for a camera, for a device that only watches"),
 }
 
 /** What an alert does to the sound on the watching device. See [AppSettings.listenOnAlert]. */
@@ -223,6 +322,40 @@ enum class ListenOnAlert(val label: String, val description: String) {
     ),
 }
 
+/**
+ * A camera this device has watched before.
+ *
+ * Carries the name it announced at the time, so the list reads "Nursery" rather than
+ * "100.87.4.19" — which matters most for exactly the addresses discovery cannot find, since
+ * a tailnet address is the least memorable string in the house.
+ */
+data class RecentCamera(
+    val name: String,
+    val host: String,
+    val port: Int,
+    val lastSeenMillis: Long,
+) {
+    fun encode(): String = listOf(host, port.toString(), lastSeenMillis.toString(), sanitised(name))
+        .joinToString("|")
+
+    private fun sanitised(value: String): String = value.replace('|', ' ').trim()
+
+    companion object {
+        fun parse(line: String): RecentCamera? {
+            val parts = line.split('|')
+            if (parts.size < 4) return null
+            val port = parts[1].toIntOrNull() ?: return null
+            val host = parts[0].takeIf { it.isNotBlank() } ?: return null
+            return RecentCamera(
+                host = host,
+                port = port,
+                lastSeenMillis = parts[2].toLongOrNull() ?: 0L,
+                name = parts.drop(3).joinToString("|").ifBlank { host },
+            )
+        }
+    }
+}
+
 /** One offered picture size. 16:9 throughout, because the capture preset asks for it. */
 data class VideoSize(val height: Int, val width: Int, val label: String)
 
@@ -235,3 +368,37 @@ val VIDEO_HEIGHTS = listOf(
 
 /** The three frame rates, smoothest first. */
 val FRAME_RATES = listOf(15, 12, 8)
+
+/**
+ * What the data-saver row offers. Null is "everything", which is right on home WiFi.
+ *
+ * 5 fps still reads as movement; 2 is a slideshow that answers "is the baby still there";
+ * 1 is for a connection that is barely working at all.
+ */
+val DATA_SAVER_CHOICES: List<Pair<String, Int?>> = listOf(
+    "Off" to null,
+    "5 fps" to 5,
+    "2 fps" to 2,
+    "1 fps" to 1,
+)
+
+/**
+ * Writes a viewer's remote change into this device's own settings.
+ *
+ * Null means "leave it alone" on the wire, and it means the same here — a parent turning the
+ * torch on from the kitchen must not silently reset the sensitivity they spent a week getting
+ * right. The lens is stored as the flag the camera screen reads on its next start, so the
+ * change outlives the session it was made in.
+ */
+fun AppSettings.applyRemote(change: com.hazemafaneh.babymonitorpro.protocol.ControlMessage.SetCameraSettings) {
+    change.motionSensitivity?.let { motionSensitivity = it }
+    change.soundSensitivity?.let { soundSensitivity = it }
+    change.useFrontCamera?.let { useFrontCamera = it }
+    change.deviceName?.takeIf { it.isNotBlank() }?.let { deviceName = it }
+    change.videoHeight?.let { videoHeight = it }
+    change.frameRate?.let { frameRate = it }
+    // The torch is deliberately not stored: it is a thing the room is doing right now, not a
+    // preference, and a camera that came back from a restart with the light on would be a
+    // camera that woke the baby.
+}
+

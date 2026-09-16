@@ -26,6 +26,7 @@ import kotlinx.coroutines.launch
 @Composable
 internal fun MjpegFrameLoop(
     endpoint: CameraEndpoint,
+    maxFps: Int?,
     onStatus: (VideoStatus) -> Unit,
     onError: (String?) -> Unit,
     onFrame: (Long) -> Unit,
@@ -62,7 +63,7 @@ internal fun MjpegFrameLoop(
                             }
                         }
                     }
-                    client.streamFrames().collect { jpeg ->
+                    client.streamFrames(maxFps).collect { jpeg ->
                         received++
                         if (render(jpeg)) {
                             drawn++

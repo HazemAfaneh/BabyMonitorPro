@@ -2,6 +2,11 @@ package com.hazemafaneh.babymonitorpro.ui.components
 
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
+import androidx.compose.foundation.Canvas
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -20,6 +25,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import com.hazemafaneh.babymonitorpro.detect.MotionDetector
 import com.hazemafaneh.babymonitorpro.detect.SoundDetector
 import kotlin.math.sqrt
 import com.hazemafaneh.babymonitorpro.ui.theme.BmpTheme
@@ -133,3 +139,136 @@ private const val MIN_BAR = 0.14f
 private val METER_HEIGHT = 44.dp
 private val BAR_GAP = 3.dp
 private val BAR_RADIUS = 2.dp
+
+/**
+ * Where the room is, right now, on a sensitivity slider's own scale.
+ *
+ * The slider asks for a percentage and the room produces an RMS reading, and nothing on the
+ * screen connected the two — so "alert me at 50%" was a number a parent could only set by
+ * trial and error, at night, on a sleeping baby. This runs the live measurement back through
+ * the detector's own curve (see [SoundDetector.sensitivityFor]) and draws it as a line at the
+ * matching position: *this* noise would raise an alert at 62% and above.
+ *
+ * Two marks, because a room is not one number:
+ *
+ * - **The live line** tracks the current chunk. It moves constantly, which is the point — a
+ *   still line would be a room nobody is in.
+ * - **The peak line** holds the loudest reading of the last few seconds and decays back down,
+ *   because the noise worth setting a threshold against — a cough, a door, one cry — is over
+ *   long before a parent has looked up at the screen.
+ *
+ * Drawn against the same track geometry the slider uses, so the two read as one control.
+ */
+@Composable
+fun LevelMarker(
+    /** Where the room is now, 0..100 on the same scale the slider shows. */
+    levelPercent: Float,
+    /** Where the slider is. The room alerts when it reaches or passes this. */
+    thresholdPercent: Int,
+    modifier: Modifier = Modifier,
+) {
+    val live = levelPercent / 100f
+    var peak by remember { mutableStateOf(0f) }
+
+    // Keyed on the level so the peak follows the audio rather than the frame rate: every
+    // published chunk either raises the peak or lets it fall a little.
+    LaunchedEffect(levelPercent) {
+        peak = maxOf(live, peak - PEAK_DECAY)
+    }
+
+    val livePosition by animateFloatAsState(
+        targetValue = live.coerceIn(0f, 1f),
+        animationSpec = tween(BmpTheme.motion.meterMillis),
+        label = "soundNow",
+    )
+    val peakPosition by animateFloatAsState(
+        targetValue = peak.coerceIn(0f, 1f),
+        animationSpec = tween(BmpTheme.motion.meterMillis),
+        label = "soundPeak",
+    )
+
+    val loud = BmpTheme.semantic.statusLive
+    val quiet = BmpTheme.tints.joy
+    // Marigold once the room has reached the line, which is the moment an alert fires.
+    val armed = levelPercent >= thresholdPercent
+    val trackColour = MaterialTheme.colorScheme.outlineVariant
+
+    Canvas(modifier.fillMaxWidth().height(MARKER_HEIGHT)) {
+        // The thumb's radius is dead space at both ends of a Material slider, so the marks
+        // line up with the track rather than with the edge of the card.
+        val inset = THUMB_INSET.toPx()
+        val usable = (size.width - inset * 2).coerceAtLeast(1f)
+        val baseline = size.height - BASELINE_GAP.toPx()
+
+        drawLine(
+            color = trackColour,
+            start = Offset(inset, baseline),
+            end = Offset(inset + usable, baseline),
+            strokeWidth = TRACK_STROKE.toPx(),
+        )
+
+        // Peak first, so the live mark draws over it when they meet.
+        val peakX = inset + usable * peakPosition
+        drawLine(
+            color = quiet,
+            start = Offset(peakX, baseline),
+            end = Offset(peakX, baseline - PEAK_HEIGHT.toPx()),
+            strokeWidth = MARK_STROKE.toPx(),
+        )
+
+        val liveX = inset + usable * livePosition
+        drawLine(
+            color = if (armed) loud else quiet,
+            start = Offset(liveX, baseline),
+            end = Offset(liveX, baseline - LIVE_HEIGHT.toPx()),
+            strokeWidth = MARK_STROKE.toPx(),
+        )
+    }
+}
+
+/** How fast the peak mark falls back, per audio chunk — about three seconds from full. */
+private const val PEAK_DECAY = 0.035f
+
+private val MARKER_HEIGHT = 22.dp
+private val BASELINE_GAP = 2.dp
+private val LIVE_HEIGHT = 18.dp
+private val PEAK_HEIGHT = 11.dp
+private val TRACK_STROKE = 1.5.dp
+private val MARK_STROKE = 2.5.dp
+
+/** Material's slider leaves a thumb radius of dead track at each end. */
+private val THUMB_INSET = 10.dp
+
+/**
+ * The room's loudness as a percentage, on the scale the slider shows.
+ *
+ * **Louder is a bigger number**, which is the whole point of this conversion. The detectors
+ * think in *sensitivity* — how little it takes to set them off — and that runs the other way:
+ * a more sensitive camera has a lower threshold. Showing a parent a number that goes *down*
+ * as the room gets louder is how you get "the fan reads 60, so I set 70 to ignore it" and an
+ * app that then alerts on the fan constantly. So the reading and the control are both stated
+ * in loudness, and the inversion happens once, here, where it can be seen.
+ */
+fun soundLevelPercent(level: Float): Float = SoundDetector.levelPercent(level)
+
+/** The same conversion for movement: more of the picture changing is a bigger number. */
+fun motionLevelPercent(ratio: Float): Float = MotionDetector.levelPercent(ratio)
+
+/** The threshold as the detector wants it, from the number the parent set. */
+fun sensitivityForThreshold(thresholdPercent: Int): Int = 100 - thresholdPercent.coerceIn(0, 100)
+
+/** And back again, for showing a stored setting on the slider. */
+fun thresholdForSensitivity(sensitivity: Int): Int = 100 - sensitivity.coerceIn(0, 100)
+
+/** The sound flavour: the room's loudness against the sound threshold. */
+@Composable
+fun SoundLevelMarker(level: Float, thresholdPercent: Int, modifier: Modifier = Modifier) {
+    LevelMarker(soundLevelPercent(level), thresholdPercent, modifier)
+}
+
+/** The movement flavour: how much of the picture is changing, against the motion threshold. */
+@Composable
+fun MotionLevelMarker(level: Float, thresholdPercent: Int, modifier: Modifier = Modifier) {
+    LevelMarker(motionLevelPercent(level), thresholdPercent, modifier)
+}
+

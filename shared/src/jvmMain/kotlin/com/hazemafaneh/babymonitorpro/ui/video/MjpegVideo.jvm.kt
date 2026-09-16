@@ -25,6 +25,7 @@ import kotlinx.coroutines.withContext
 actual fun MjpegVideo(
     endpoint: CameraEndpoint,
     modifier: Modifier,
+    maxFps: Int?,
     onStatus: (VideoStatus) -> Unit,
     onFrame: (Long) -> Unit,
     onError: (String?) -> Unit,
@@ -36,6 +37,7 @@ actual fun MjpegVideo(
 
     MjpegFrameLoop(
         endpoint = endpoint,
+        maxFps = maxFps,
         onStatus = onStatus,
         onError = onError,
         onFrame = onFrame,

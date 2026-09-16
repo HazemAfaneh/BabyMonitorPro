@@ -4,6 +4,14 @@ import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.snap
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.gestures.rememberTransformableState
+import androidx.compose.foundation.gestures.transformable
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.unit.IntSize
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -15,6 +23,8 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.FlowRowScope
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
@@ -22,6 +32,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.verticalScroll
@@ -58,15 +69,18 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.core.tween
 import com.hazemafaneh.babymonitorpro.audio.createAudioPlayer
+import com.hazemafaneh.babymonitorpro.client.PlatformViewingSession
 import com.hazemafaneh.babymonitorpro.client.ViewerClient
 import com.hazemafaneh.babymonitorpro.core.AudioConfig
 import com.hazemafaneh.babymonitorpro.core.CameraEndpoint
+import com.hazemafaneh.babymonitorpro.core.BatteryState
 import com.hazemafaneh.babymonitorpro.core.isTelevision
 import com.hazemafaneh.babymonitorpro.core.nowMillis
 import com.hazemafaneh.babymonitorpro.notify.liveSessions
@@ -146,6 +160,28 @@ fun LiveViewScreen(
     // "until quiet" undo its own switch-on without ever undoing the parent's: a parent who
     // pressed Sound themselves is listening deliberately, and nothing here may mute that.
     var listeningBecauseOfAlert by remember(endpoint.id) { mutableStateOf(false) }
+    // Rotation, on this screen only.
+    //
+    // The camera phone is propped against a cot rail, wedged under a mattress or taped to a
+    // shelf, and whichever way *it* thinks is up is frequently not the way the room is.
+    // Turning the picture here costs nothing and asks nothing of the nursery device — and it
+    // is the viewer, not the camera, that knows which way the parent is holding their phone.
+    var spin by remember(endpoint.id) { mutableStateOf(0) }
+    // Held here rather than in the pane, because a television has no pinch and drives this
+    // from buttons in the rail. Same state either way, two ways of changing it.
+    var zoom by remember(endpoint.id) { mutableStateOf(1f) }
+    var pan by remember(endpoint.id) { mutableStateOf(Offset.Zero) }
+    var viewport by remember(endpoint.id) { mutableStateOf(IntSize.Zero) }
+
+    // Clamped in one place, whichever control moved it. A zoom applied from a button can
+    // shrink the picture out from under a pan in a way a pinch never does, so the two are
+    // settled together rather than at each call site.
+    fun clampedPan(candidate: Offset, atZoom: Float): Offset {
+        if (atZoom <= 1f || viewport == IntSize.Zero) return Offset.Zero
+        val maxX = (viewport.width * (atZoom - 1f)) / 2f
+        val maxY = (viewport.height * (atZoom - 1f)) / 2f
+        return Offset(candidate.x.coerceIn(-maxX, maxX), candidate.y.coerceIn(-maxY, maxY))
+    }
     var lastLoudAt by remember(endpoint.id) { mutableStateOf(0L) }
     var controlsVisible by remember { mutableStateOf(true) }
     var lastInteraction by remember { mutableStateOf(nowMillis()) }
@@ -163,6 +199,23 @@ fun LiveViewScreen(
 
     // The control the remote starts on, and the one it is put back on if focus is ever lost.
     val soundAnchor = rememberFocusAnchor()
+
+    // Hoisted out of the control effect so the UI can send on it too — this is the channel a
+    // parent changes the nursery device's settings over, from wherever they are standing.
+    val outgoing = remember(endpoint.id) {
+        MutableSharedFlow<ControlMessage>(
+            extraBufferCapacity = 4,
+            onBufferOverflow = BufferOverflow.DROP_OLDEST,
+        )
+    }
+    var showCameraControls by remember(endpoint.id) { mutableStateOf(false) }
+
+    val battery = remember(cameraStatus?.batteryPercent, cameraStatus?.charging) {
+        BatteryState(
+            percent = cameraStatus?.batteryPercent ?: -1,
+            charging = cameraStatus?.charging ?: false,
+        )
+    }
 
     val reducedMotion = LocalReducedMotion.current
     val window = rememberWindowClass()
@@ -183,7 +236,14 @@ fun LiveViewScreen(
     // starts another rather than relabelling the first.
     DisposableEffect(endpoint.id) {
         liveSessions.startViewing(endpoint)
-        onDispose { liveSessions.stopViewing() }
+        // And the foreground service that keeps this device *allowed* to watch once the
+        // parent switches app. The live session above is only a surface to look at; without
+        // this the sockets behind it are frozen the moment the app leaves the screen.
+        PlatformViewingSession.begin(endpoint.name)
+        onDispose {
+            liveSessions.stopViewing()
+            PlatformViewingSession.end()
+        }
     }
 
     // The status chip's own words, so a glance at the phone face-down on the bed and a glance
@@ -197,28 +257,22 @@ fun LiveViewScreen(
         )
     }
 
-    LaunchedEffect(lastInteraction, window) {
-        controlsVisible = true
-        // Desktop keeps its chrome: there is nothing to reveal by hiding it. So does a
-        // television, and for a harder reason — auto-hiding chrome is a touch idea. It
-        // assumes a tap can bring it back, and a remote has no tap: once the bar had faded
-        // there was nothing focusable left on screen, so the D-pad had nowhere to go and the
-        // picture became a dead end with no visible way back into the app.
-        if (isTelevision || window == WindowClass.EXPANDED || videoRendersBehindUi) {
-            return@LaunchedEffect
-        }
-        delay(CONTROLS_TIMEOUT_MILLIS)
-        controlsVisible = false
-    }
+    // The chrome no longer hides anywhere.
+    //
+    // It used to fade out four seconds after the last touch on a phone held in portrait, on
+    // the theory that the picture is the interface. In practice the things it took with it
+    // are the things a parent actually looks at: whether the feed is live, the latency, and
+    // the Sound control. Wanting to know "is this still working" is the *reason* for glancing
+    // at the phone, and the answer was hidden behind a tap the parent had to know to make.
+    //
+    // It was also the last remaining focus trap on a television, where there is no tap to
+    // bring anything back.
+    LaunchedEffect(lastInteraction) { controlsVisible = true }
 
     // Control channel: status, alerts, and a round-trip ping that doubles as the
     // connection's health check.
     LaunchedEffect(endpoint.id) {
         val client = ViewerClient(endpoint)
-        val outgoing = MutableSharedFlow<ControlMessage>(
-            extraBufferCapacity = 4,
-            onBufferOverflow = BufferOverflow.DROP_OLDEST,
-        )
         val pinger = launch {
             while (true) {
                 delay(PING_INTERVAL_MILLIS)
@@ -230,7 +284,20 @@ fun LiveViewScreen(
                 runCatching {
                     client.control(outgoing).collect { message ->
                         when (message) {
-                            is ControlMessage.Status -> cameraStatus = message
+                            is ControlMessage.Status -> {
+                                cameraStatus = message
+                                // Remembered only once a camera has actually answered, and
+                                // under the name it calls itself. An address that refused is
+                                // not worth offering tomorrow, and "Nursery" is a great deal
+                                // easier to recognise than 100.87.4.19 — which is exactly the
+                                // address a tailnet gives you and discovery cannot find.
+                                settings.rememberCamera(
+                                    name = message.deviceName.ifBlank { endpoint.name },
+                                    host = endpoint.host,
+                                    port = endpoint.port,
+                                    atMillis = nowMillis(),
+                                )
+                            }
                             is ControlMessage.Pong ->
                                 latencyMillis = nowMillis() - message.nonce
                             is ControlMessage.MotionEvent -> {
@@ -393,8 +460,8 @@ fun LiveViewScreen(
     // window: plenty hand back 1920x1080 at a density that measures 640dp, which put a 55"
     // screen on the phone layout with auto-hiding chrome and no rail at all.
     val railPresent = (isTelevision || window == WindowClass.EXPANDED) && !videoIsSeparateLayer
-    val chromeAlwaysVisible = videoIsSeparateLayer || isTelevision ||
-        window == WindowClass.EXPANDED || controlsVisible
+    // Always. See the effect above.
+    val chromeAlwaysVisible = true
 
     // A landscape camera watched on an upright phone aspect-fits into roughly a third of the
     // screen, with the rest black. Nothing is wrong and nothing is cropped — the picture is
@@ -421,6 +488,17 @@ fun LiveViewScreen(
 
     val audioAvailable = audioPlayer != null && cameraStatus?.audioAvailable != false
 
+    // Named apart from the video `status` above: one is the connection, this is the camera's
+    // own report of itself.
+    val remoteStatus = cameraStatus
+
+    // An explicit Box, and the panel emitted *after* the picture.
+    //
+    // Both were siblings of whatever container the navigation host provides, and the picture
+    // is a full-screen Row with a black background — so it was painted straight over the
+    // panel, every time. The panel was being composed, laid out and given focus; it was
+    // simply underneath. Tapping Camera looked like it did nothing at all.
+    Box(Modifier.fillMaxSize()) {
     Row(Modifier.fillMaxSize().background(Color.Black)) {
         LivePane(
             modifier = Modifier.weight(1f).fillMaxHeight(),
@@ -428,6 +506,9 @@ fun LiveViewScreen(
             status = status,
             latencyMillis = latencyMillis,
             cameraStatus = cameraStatus,
+            // Reported by the camera in every status: the nursery phone's battery is the one
+            // nobody can see, because that phone is face-down in a dark room.
+            battery = battery,
             failure = failure,
             alert = alert,
             audioOn = audioOn,
@@ -437,6 +518,17 @@ fun LiveViewScreen(
             statusTone = status.describe().second,
             suggestRotation = suggestRotation,
             videoIsSeparateLayer = videoIsSeparateLayer,
+            spin = spin,
+            zoom = zoom,
+            pan = pan,
+            onZoomChange = {
+                zoom = it
+                pan = clampedPan(pan, it)
+            },
+            onPanChange = { pan = clampedPan(it, zoom) },
+            onViewport = { viewport = it },
+            // The data-saver setting, asked of the camera rather than applied here.
+            maxFps = settings.dataSaverFps,
             reducedMotion = reducedMotion,
             night = night,
             railPresent = railPresent,
@@ -460,6 +552,17 @@ fun LiveViewScreen(
                 listeningBecauseOfAlert = false
                 lastInteraction = nowMillis()
             },
+            // Only once the camera has told us what it currently is: a panel of controls
+            // showing guesses would be worse than no panel.
+            onCameraControls = if (cameraStatus != null) {
+                { showCameraControls = true }
+            } else {
+                null
+            },
+            onRotate = {
+                spin = (spin + QUARTER_TURN) % FULL_TURN
+                lastInteraction = nowMillis()
+            },
             onBack = onBack,
         )
 
@@ -468,10 +571,36 @@ fun LiveViewScreen(
         if (railPresent) {
             SideRail(
                 soundAnchor = soundAnchor,
+                onCameraControls = if (cameraStatus != null) {
+                    { showCameraControls = true }
+                } else {
+                    null
+                },
+                onRotate = {
+                    spin = (spin + QUARTER_TURN) % FULL_TURN
+                    lastInteraction = nowMillis()
+                },
+                zoom = zoom,
+                onZoomChange = {
+                    zoom = it
+                    pan = clampedPan(pan, it)
+                    lastInteraction = nowMillis()
+                },
+                onNudge = { dx, dy ->
+                    // A press moves the picture by a fixed slice of the window, which is the
+                    // same distance whatever the zoom — a nudge that shrank as you zoomed in
+                    // would be most useless exactly where panning matters most.
+                    pan = clampedPan(
+                        pan + Offset(viewport.width * dx * PAN_STEP, viewport.height * dy * PAN_STEP),
+                        zoom,
+                    )
+                    lastInteraction = nowMillis()
+                },
                 name = cameraStatus?.deviceName ?: endpoint.name,
                 // Host only. The rail is 352dp and the port is the half nobody reads aloud;
                 // the phone's bar still prints the whole thing.
                 address = endpoint.host,
+                battery = battery,
                 history = alertHistory,
                 level = heardLevel,
                 audioOn = audioOn,
@@ -488,6 +617,19 @@ fun LiveViewScreen(
                     lastInteraction = nowMillis()
                 },
                 onBack = onBack,
+            )
+        }
+    }
+
+        // Over the picture, not under it.
+        if (showCameraControls && remoteStatus != null) {
+            RemoteCameraControls(
+                status = remoteStatus,
+                // Only while this device is actually listening: the meter reads the audio
+                // arriving here, and with the sound off there is nothing arriving to read.
+                roomLevel = heardLevel.takeIf { audioOn && audioAvailable },
+                onDismiss = { showCameraControls = false },
+                onChange = { change -> outgoing.tryEmit(change) },
             )
         }
     }
@@ -508,6 +650,7 @@ private fun LivePane(
     status: VideoStatus,
     latencyMillis: Long?,
     cameraStatus: ControlMessage.Status?,
+    battery: BatteryState,
     failure: String?,
     alert: CameraAlert?,
     audioOn: Boolean,
@@ -517,6 +660,13 @@ private fun LivePane(
     statusTone: StatusTone,
     suggestRotation: Boolean,
     videoIsSeparateLayer: Boolean,
+    spin: Int,
+    zoom: Float,
+    pan: Offset,
+    onZoomChange: (Float) -> Unit,
+    onPanChange: (Offset) -> Unit,
+    onViewport: (IntSize) -> Unit,
+    maxFps: Int?,
     reducedMotion: Boolean,
     night: Boolean,
     railPresent: Boolean,
@@ -527,6 +677,8 @@ private fun LivePane(
     onAspectRatio: (Float) -> Unit,
     onTouch: () -> Unit,
     onToggleAudio: () -> Unit,
+    onCameraControls: (() -> Unit)?,
+    onRotate: () -> Unit,
     onBack: () -> Unit,
 ) {
     Box(
@@ -546,8 +698,25 @@ private fun LivePane(
             },
         ),
     ) {
+        // Pinch to zoom, drag to move, double-tap to come back.
+        //
+        // A cot fills a fraction of a wide-angle phone camera's frame, and the thing a parent
+        // is actually trying to see — is she breathing, is that her face or the blanket — is a
+        // few hundred pixels in the middle of it. The stream is 720p; the screen is showing it
+        // at a third of that. There is real detail here to magnify, and it costs nothing to
+        // send because the zoom is entirely on this device.
+        //
+        // Bounded to 4x, which is where the JPEG blocks take over from the baby, and the pan
+        // is clamped so the picture can never be dragged off its own edges — a black screen
+        // you have to guess your way out of is worse than no zoom at all.
+        val transform = rememberTransformableState { zoomChange, panChange, _ ->
+            onZoomChange((zoom * zoomChange).coerceIn(1f, MAX_ZOOM))
+            onPanChange(pan + panChange)
+        }
+
         MjpegVideo(
             endpoint = endpoint,
+            maxFps = maxFps,
             modifier = if (videoIsSeparateLayer) {
                 Modifier.fillMaxSize().padding(top = 56.dp, bottom = 88.dp)
             } else {
@@ -556,7 +725,35 @@ private fun LivePane(
                 // A dead feed at full brightness reads as live. Holding the last frame back
                 // keeps it as context without claiming it is current — and it is a fade,
                 // not a blink, per the dark-room rule.
-                .alpha(if (status == VideoStatus.RECONNECTING) STALE_FRAME_ALPHA else 1f),
+                .alpha(if (status == VideoStatus.RECONNECTING) STALE_FRAME_ALPHA else 1f)
+                .onSizeChanged { onViewport(it) }
+                .graphicsLayer {
+                    scaleX = zoom
+                    scaleY = zoom
+                    translationX = pan.x
+                    translationY = pan.y
+                    rotationZ = spin.toFloat()
+                }
+                // Not on a television: there is nothing to pinch, and a transformable node
+                // there is one more thing for the D-pad to get caught on.
+                .then(if (isTelevision) Modifier else Modifier.transformable(transform))
+                .then(
+                    if (isTelevision) {
+                        Modifier
+                    } else {
+                        Modifier.pointerInput(endpoint.id) {
+                            detectTapGestures(
+                                onDoubleTap = {
+                                    // Straight back to the whole picture. The way out of a
+                                    // zoom has to be one gesture a parent can make without
+                                    // looking, at 3am, holding a baby.
+                                    onZoomChange(1f)
+                                    onPanChange(Offset.Zero)
+                                },
+                            )
+                        }
+                    },
+                ),
             onStatus = onStatus,
             onFrame = { },
             onError = onError,
@@ -673,6 +870,9 @@ private fun LivePane(
                 if (!railPresent) BottomBar(
                     name = cameraStatus?.deviceName ?: endpoint.name,
                     address = endpoint.id,
+                    battery = battery,
+                    onCameraControls = onCameraControls,
+                    onRotate = onRotate,
                     audioOn = audioOn,
                     audioAvailable = audioAvailable,
                     audioSupported = audioSupported,
@@ -835,6 +1035,9 @@ private fun AlertBanner(
 private fun BottomBar(
     name: String,
     address: String,
+    battery: BatteryState,
+    onCameraControls: (() -> Unit)?,
+    onRotate: () -> Unit,
     audioOn: Boolean,
     audioAvailable: Boolean,
     audioSupported: Boolean,
@@ -842,71 +1045,213 @@ private fun BottomBar(
     onToggleAudio: () -> Unit,
     onBack: () -> Unit,
 ) {
+    // Two rows on a phone, one on anything wider.
+    //
+    // The bar carries six things: the mark, the camera's name, its address, the battery, the
+    // sound pill and three actions. On a 393pt screen that is more than fits on a line — the
+    // name was squeezed to nothing and the battery clipped mid-word, so "0% · ch" sat where
+    // the nursery's name should be. Identity on the first line, controls on the second.
+    //
+    // Written as two explicit rows rather than a wrapping one: a flow layout counts every
+    // spacer as an item and broke the controls across three lines in an order nobody chose.
+    val stacked = rememberWindowClass().isCompact
+
     Surface(
         modifier = Modifier
             .safeDrawingPadding()
             .padding(horizontal = CHROME_INSET)
             .padding(bottom = BAR_BOTTOM)
-            .then(if (fullWidth) Modifier.fillMaxWidth() else Modifier)
+            .then(if (fullWidth || stacked) Modifier.fillMaxWidth() else Modifier)
             .clip(MaterialTheme.shapes.extraLarge),
         // Cream and opaque, the same pill the status chip is. The bar is chrome laid over a
         // picture, and chrome that takes its colour from the frame behind it is chrome that
         // disappears exactly when the frame goes dark.
         color = MaterialTheme.colorScheme.background,
     ) {
-        Row(
-            Modifier.padding(horizontal = BAR_H_PADDING, vertical = BAR_V_PADDING),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            IconPlate(
-                icon = BmpIcons.Teddy,
-                fill = BmpTheme.tints.lemon.fill,
-                contentColor = BmpTheme.tints.lemon.glyph,
-                size = PlateSize.row,
-            )
-            Spacer(Modifier.size(Space.sm))
-            Column(Modifier.weight(1f)) {
+        if (stacked) {
+            Column(
+                Modifier.padding(horizontal = BAR_H_PADDING, vertical = BAR_V_PADDING),
+                verticalArrangement = Arrangement.spacedBy(Space.xs),
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    BarIdentity(name, address, battery, Modifier.weight(1f))
+                }
+                Row(
+                    Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(Space.xs),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    BarControls(
+                        audioOn = audioOn,
+                        audioAvailable = audioAvailable,
+                        audioSupported = audioSupported,
+                        onToggleAudio = onToggleAudio,
+                        onRotate = onRotate,
+                        onCameraControls = onCameraControls,
+                        onBack = onBack,
+                    )
+                }
+            }
+        } else {
+            Row(
+                Modifier.padding(horizontal = BAR_H_PADDING, vertical = BAR_V_PADDING),
+                horizontalArrangement = Arrangement.spacedBy(Space.xs),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                BarIdentity(name, address, battery, Modifier.weight(1f))
+                BarControls(
+                    audioOn = audioOn,
+                    audioAvailable = audioAvailable,
+                    audioSupported = audioSupported,
+                    onToggleAudio = onToggleAudio,
+                    onRotate = onRotate,
+                    onCameraControls = onCameraControls,
+                    onBack = onBack,
+                )
+            }
+        }
+    }
+}
+
+/** Which camera this is, where it lives, and how much battery it has left. */
+@Composable
+private fun BarIdentity(
+    name: String,
+    address: String,
+    battery: BatteryState,
+    modifier: Modifier = Modifier,
+) {
+    Row(modifier, verticalAlignment = Alignment.CenterVertically) {
+        IconPlate(
+            icon = BmpIcons.Teddy,
+            fill = BmpTheme.tints.lemon.fill,
+            contentColor = BmpTheme.tints.lemon.glyph,
+            size = PlateSize.row,
+        )
+        Spacer(Modifier.size(Space.sm))
+        Column(Modifier.weight(1f)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(
                     text = name,
                     style = MaterialTheme.typography.titleMedium.copy(fontSize = BAR_NAME),
                     fontWeight = FontWeight.Bold,
                     color = MaterialTheme.colorScheme.onSurface,
                     maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    // Gives up space to the battery rather than taking all of it: an
+                    // unweighted name left the battery a column a few pixels wide, which it
+                    // filled one character per line.
+                    modifier = Modifier.weight(1f, fill = false),
                 )
-                // The privacy line's slot on this screen — the address, on your network,
-                // right now, under the name of the device it belongs to.
-                Text(
-                    text = "On your WiFi · $address",
-                    style = MaterialTheme.typography.bodySmall.copy(fontSize = BAR_ADDRESS),
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 1,
-                )
+                BatteryLabel(battery, Modifier.padding(start = Space.xs))
             }
-            if (audioSupported) {
-                Spacer(Modifier.size(Space.xs))
-                SoundPill(
-                    on = audioOn,
-                    available = audioAvailable,
-                    onClick = onToggleAudio,
-                )
-            }
-            val closeInteraction = remember { MutableInteractionSource() }
-            TextButton(
-                onClick = onBack,
-                interactionSource = closeInteraction,
-                modifier = Modifier.focusRing(closeInteraction, MaterialTheme.shapes.medium),
-                colors = ButtonDefaults.textButtonColors(
-                    contentColor = MaterialTheme.colorScheme.secondary,
-                ),
-            ) {
-                Text(
-                    text = "Close",
-                    style = MaterialTheme.typography.labelLarge.copy(fontSize = SOUND_TEXT),
-                    fontWeight = FontWeight.Bold,
-                )
-            }
+            // The privacy line's slot on this screen — the address, on your network, right
+            // now, under the name of the device it belongs to.
+            Text(
+                text = "On your WiFi · $address",
+                style = MaterialTheme.typography.bodySmall.copy(fontSize = BAR_ADDRESS),
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
         }
     }
+}
+
+/** Sound, rotate, the camera's own settings, and the way out. */
+@Composable
+private fun BarControls(
+    audioOn: Boolean,
+    audioAvailable: Boolean,
+    audioSupported: Boolean,
+    onToggleAudio: () -> Unit,
+    onRotate: () -> Unit,
+    onCameraControls: (() -> Unit)?,
+    onBack: () -> Unit,
+) {
+    if (audioSupported) {
+        SoundPill(on = audioOn, available = audioAvailable, onClick = onToggleAudio)
+    }
+
+    val rotateInteraction = remember { MutableInteractionSource() }
+    IconButton(
+        onClick = onRotate,
+        interactionSource = rotateInteraction,
+        modifier = Modifier.size(BAR_ICON_BUTTON).focusRing(rotateInteraction, CircleShape),
+    ) {
+        Icon(
+            imageVector = BmpIcons.Rotate,
+            contentDescription = "Turn the picture a quarter turn",
+            tint = MaterialTheme.colorScheme.secondary,
+            modifier = Modifier.size(SOUND_ICON),
+        )
+    }
+
+    if (onCameraControls != null) {
+        val controlsInteraction = remember { MutableInteractionSource() }
+        // A glyph, not the word. The bar already carries the camera's name, its address and
+        // the sound pill; "Camera" spelled out was the straw that squeezed the name out of
+        // existence on a phone, and the panel it opens is titled with that name anyway.
+        IconButton(
+            onClick = onCameraControls,
+            interactionSource = controlsInteraction,
+            modifier = Modifier.size(BAR_ICON_BUTTON).focusRing(controlsInteraction, CircleShape),
+        ) {
+            Icon(
+                imageVector = BmpIcons.Camera,
+                contentDescription = "Camera settings",
+                tint = MaterialTheme.colorScheme.secondary,
+                modifier = Modifier.size(SOUND_ICON),
+            )
+        }
+    }
+
+    val closeInteraction = remember { MutableInteractionSource() }
+    TextButton(
+        onClick = onBack,
+        interactionSource = closeInteraction,
+        modifier = Modifier.focusRing(closeInteraction, MaterialTheme.shapes.medium),
+        colors = ButtonDefaults.textButtonColors(
+            contentColor = MaterialTheme.colorScheme.secondary,
+        ),
+    ) {
+        Text(
+            text = "Close",
+            style = MaterialTheme.typography.labelLarge.copy(fontSize = SOUND_TEXT),
+            fontWeight = FontWeight.Bold,
+        )
+    }
+}
+
+/**
+ * The battery of the device doing the filming.
+ *
+ * Beside that device's name, because it is a fact *about the camera* and not about this
+ * phone — a parent glancing at a tablet in the kitchen has to be able to tell whose 12% it
+ * is. Silent above a fifth: a number that is always on screen is a number nobody reads, and
+ * this one only matters when it is low. Charging is called out rather than hidden, because a
+ * phone at 8% on a charger is fine and a phone at 8% on a shelf is the night ending early.
+ */
+@Composable
+private fun BatteryLabel(battery: BatteryState, modifier: Modifier = Modifier) {
+    if (!battery.known) return
+    if (!battery.low && !battery.charging) return
+    val tone = if (battery.low) {
+        MaterialTheme.colorScheme.error
+    } else {
+        BmpTheme.semantic.statusLive
+    }
+    Text(
+        text = if (battery.charging) "${battery.percent}% · charging" else "${battery.percent}%",
+        style = MaterialTheme.typography.labelMedium.copy(fontSize = BAR_ADDRESS),
+        fontWeight = FontWeight.Bold,
+        color = tone,
+        // One line, never wrapped. It sits beside a name of unknown length, and a battery
+        // reading that breaks across lines is worse than no battery reading.
+        maxLines = 1,
+        softWrap = false,
+        modifier = modifier,
+    )
 }
 
 /**
@@ -987,8 +1332,14 @@ private fun SoundPill(
 @Composable
 private fun SideRail(
     soundAnchor: androidx.compose.ui.focus.FocusRequester,
+    onCameraControls: (() -> Unit)?,
+    onRotate: () -> Unit,
+    zoom: Float,
+    onZoomChange: (Float) -> Unit,
+    onNudge: (Float, Float) -> Unit,
     name: String,
     address: String,
+    battery: BatteryState,
     history: List<CameraAlert>,
     level: Float,
     audioOn: Boolean,
@@ -1029,14 +1380,18 @@ private fun SideRail(
                     color = MaterialTheme.colorScheme.onSurface,
                     maxLines = 1,
                 )
-                Text(
-                    text = "On your WiFi · $address",
-                    style = MaterialTheme.typography.bodySmall.copy(fontSize = RAIL_ADDRESS),
-                    fontWeight = FontWeight.SemiBold,
-                    color = BmpTheme.semantic.privacy,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        text = "On your WiFi · $address",
+                        style = MaterialTheme.typography.bodySmall.copy(fontSize = RAIL_ADDRESS),
+                        fontWeight = FontWeight.SemiBold,
+                        color = BmpTheme.semantic.privacy,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f, fill = false),
+                    )
+                    BatteryLabel(battery, Modifier.padding(start = Space.xs))
+                }
             }
             Spacer(Modifier.size(Space.xs))
             // A tablet left on a counter overnight is the strongest case for night mode in
@@ -1053,7 +1408,15 @@ private fun SideRail(
             labelColor = MaterialTheme.colorScheme.onSurfaceVariant,
         ) {
             if (audioOn && audioAvailable) {
-                SoundMeter(level = level, sensitivity = METER_SENSITIVITY, height = RAIL_METER)
+                // Shorter on a television, where the rail also has to hold zoom, pan, sound
+                // and three actions. The meter is a glance, not a reading — fourteen bars at
+                // 24dp say "quiet" or "not quiet" just as well as at 38, and the height they
+                // give back goes to the alert history and the controls.
+                SoundMeter(
+                    level = level,
+                    sensitivity = METER_SENSITIVITY,
+                    height = if (isTelevision) RAIL_METER_TV else RAIL_METER,
+                )
             } else {
                 // The meter reads the sound this device is receiving, so with sound off
                 // there is nothing to read. A flat meter here would say "quiet room" when
@@ -1073,11 +1436,19 @@ private fun SideRail(
         Spacer(Modifier.height(RAIL_GAP))
 
         val lemon = BmpTheme.tints.lemon
+        // The card takes whatever height is left and no more.
+        //
+        // It used to be a fixed 168dp inside a scrolling column, which put its rounded bottom
+        // edge underneath the scroll viewport's edge — the card looked cut off rather than
+        // scrolled. Giving it the remaining space instead means every card is whole, the
+        // controls below it never move, and the only thing that scrolls is the list of
+        // alerts, which is the only thing that grows.
         RailCard(
             title = "Earlier today",
             fill = lemon.fill,
             border = lemon.border,
             labelColor = lemon.glyph,
+            modifier = Modifier.weight(1f),
         ) {
             if (history.isEmpty()) {
                 Text(
@@ -1093,16 +1464,31 @@ private fun SideRail(
                 // television screen entirely — the controls disappearing because the baby
                 // moved is exactly backwards. The card now takes the same room whether it
                 // holds one event or twenty, and the overflow scrolls inside it.
+                // Oldest at the top, newest at the bottom, and the card follows the bottom.
+                //
+                // It read newest-first before, which is defensible on paper and wrong in the
+                // hand: an event list is read the way a conversation is, and "the last one" to
+                // anyone looking at it means the one at the end. Chronological order also
+                // makes a run of alerts legible as a run — three in five minutes reads as a
+                // baby waking up, which is not obvious when they are stacked upwards.
+                //
+                // Keyed on maxValue as well as size, because the new row has not been laid out
+                // when the size changes and the scroll extent is still the old one. This runs
+                // again the moment layout catches up.
+                val historyScroll = rememberScrollState()
+                LaunchedEffect(history.size, historyScroll.maxValue) {
+                    if (history.isNotEmpty()) historyScroll.animateScrollTo(historyScroll.maxValue)
+                }
                 Column(
                     modifier = Modifier
-                        .height(RAIL_STRIP_HEIGHT)
-                        .verticalScroll(rememberScrollState()),
+                        .fillMaxHeight()
+                        .verticalScroll(historyScroll),
                     verticalArrangement = Arrangement.spacedBy(Space.xs),
                 ) {
-                    // The whole history, not the first six: the card no longer grows with it,
-                    // so capping the list only hid events a parent could otherwise scroll to.
-                    // Newest first, so the cap costs nothing at a glance.
-                    for (entry in history) {
+                    // Reversed for display rather than stored the other way round: the alert
+                    // banner and the live session both want the newest first, and one list
+                    // ordering has to be the canonical one.
+                    for (entry in history.asReversed()) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Icon(
                                 // The rattle for sound, the teddy for movement. Every row
@@ -1159,25 +1545,107 @@ private fun SideRail(
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
 
-        // Pinned to the bottom, where a hand resting on the edge of a propped-up tablet
-        // finds them without reaching across the picture.
-        Spacer(Modifier.weight(1f))
+        Spacer(Modifier.height(Space.xs))
+
+        // Zoom and pan on one row: out, the four directions, in.
+        //
+        // The factor used to be printed in the middle and it was not worth the width — a
+        // parent can see how far in they are by looking at the picture, which is the thing
+        // they are already looking at. Six squares across the rail instead.
+        //
+        // The arrows are always present, dimmed at 1x rather than hidden. A control that
+        // appears and disappears under the remote is how focus gets lost, and the rail has
+        // been bitten by that before; a dim arrow also says "there is panning here, once you
+        // zoom in", which an absent one cannot.
+        Row(
+            Modifier.fillMaxWidth().padding(bottom = Space.xs),
+            horizontalArrangement = Arrangement.spacedBy(Space.xs),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            val canPan = zoom > 1f
+            RailIconButton(
+                icon = BmpIcons.ZoomOut,
+                description = "Zoom out",
+                enabled = zoom > 1f,
+                modifier = Modifier.weight(1f).height(RAIL_BUTTON_HEIGHT),
+                onClick = { onZoomChange((zoom - ZOOM_STEP).coerceAtLeast(1f)) },
+            )
+            RailIconButton(
+                icon = BmpIcons.ArrowLeft,
+                description = "Move the picture left",
+                enabled = canPan,
+                modifier = Modifier.weight(1f).height(RAIL_BUTTON_HEIGHT),
+                onClick = { onNudge(1f, 0f) },
+            )
+            RailIconButton(
+                icon = BmpIcons.ArrowUp,
+                description = "Move the picture up",
+                enabled = canPan,
+                modifier = Modifier.weight(1f).height(RAIL_BUTTON_HEIGHT),
+                onClick = { onNudge(0f, 1f) },
+            )
+            RailIconButton(
+                icon = BmpIcons.ArrowDown,
+                description = "Move the picture down",
+                enabled = canPan,
+                modifier = Modifier.weight(1f).height(RAIL_BUTTON_HEIGHT),
+                onClick = { onNudge(0f, -1f) },
+            )
+            RailIconButton(
+                icon = BmpIcons.ArrowRight,
+                description = "Move the picture right",
+                enabled = canPan,
+                modifier = Modifier.weight(1f).height(RAIL_BUTTON_HEIGHT),
+                onClick = { onNudge(-1f, 0f) },
+            )
+            RailIconButton(
+                icon = BmpIcons.ZoomIn,
+                description = "Zoom in",
+                enabled = zoom < MAX_ZOOM,
+                modifier = Modifier.weight(1f).height(RAIL_BUTTON_HEIGHT),
+                onClick = { onZoomChange((zoom + ZOOM_STEP).coerceAtMost(MAX_ZOOM)) },
+            )
+        }
+
+        // One row: turn the picture, the camera's own settings, sound, and out.
+        //
+        // Sound takes the width the other three do not, because it is the only one whose
+        // label has to say which way it is set — "Sound on" and "Sound off" are different
+        // facts, where the other three are the same control whatever the state. Close is a
+        // cross rather than the word for the same reason it is a cross everywhere else: at
+        // this size the word is three buttons wide.
         Row(
             Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(Space.sm),
+            horizontalArrangement = Arrangement.spacedBy(Space.xs),
+            verticalAlignment = Alignment.CenterVertically,
         ) {
+            RailIconButton(
+                icon = BmpIcons.Rotate,
+                description = "Turn the picture a quarter turn",
+                onClick = onRotate,
+            )
+            if (onCameraControls != null) {
+                RailIconButton(
+                    icon = BmpIcons.Camera,
+                    description = "Camera settings",
+                    onClick = onCameraControls,
+                )
+            }
             if (audioSupported) {
                 RailSoundButton(
                     on = audioOn,
                     available = audioAvailable,
                     onClick = onToggleAudio,
                     // Where the remote lands when the live view opens. Sound is the control a
-                    // parent reaches for on this screen, and Close sits beside it, so the way
-                    // out is one press away.
+                    // parent reaches for on this screen, and the way out sits beside it.
                     modifier = Modifier.weight(1f).focusAnchor(soundAnchor),
                 )
             }
-            RailCloseButton(onClick = onBack)
+            RailIconButton(
+                icon = BmpIcons.Close,
+                description = "Close the live view",
+                onClick = onBack,
+            )
         }
     }
 }
@@ -1188,15 +1656,21 @@ private fun RailCard(
     fill: Color,
     border: Color,
     labelColor: Color,
+    modifier: Modifier = Modifier,
     content: @Composable () -> Unit,
 ) {
     Surface(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = modifier.fillMaxWidth(),
         color = fill,
         shape = MaterialTheme.shapes.large,
         border = BorderStroke(CARD_BORDER, border),
     ) {
-        Column(Modifier.padding(horizontal = RAIL_CARD_H, vertical = RAIL_CARD_V)) {
+        Column(
+            Modifier.padding(
+                horizontal = RAIL_CARD_H,
+                vertical = if (isTelevision) RAIL_CARD_V_TV else RAIL_CARD_V,
+            ),
+        ) {
             Text(
                 text = title.uppercase(),
                 style = MaterialTheme.typography.labelLarge.copy(
@@ -1261,6 +1735,58 @@ private fun RailSoundButton(
                 style = MaterialTheme.typography.labelLarge.copy(fontSize = RAIL_BUTTON_TEXT),
                 fontWeight = FontWeight.Bold,
                 color = content,
+                // One line. Sharing the row with three other controls left it a column two
+                // words wide, so it wrapped to "Sound / off" — which reads as a two-line
+                // heading rather than as the state of a switch.
+                maxLines = 1,
+                softWrap = false,
+            )
+        }
+    }
+}
+
+/**
+ * A square control in the rail's action row — rotate, or the camera's own settings.
+ *
+ * Square rather than labelled, because the row holds Sound, these two and Close, and on a
+ * 352dp rail four words do not fit. Each still takes the full focus ring, so the remote can
+ * see it coming.
+ */
+@Composable
+private fun RailIconButton(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    description: String,
+    onClick: () -> Unit,
+    enabled: Boolean = true,
+    // Square by default. Losing the width made an unweighted one expand to the whole row and
+    // push Sound, the camera panel and Close off the rail entirely.
+    modifier: Modifier = Modifier.size(RAIL_BUTTON_HEIGHT),
+) {
+    val shape = RoundedCornerShape(RAIL_BUTTON_RADIUS)
+    Surface(
+        modifier = modifier
+            .clip(shape)
+            .pressable(onClick = onClick, enabled = enabled, focusShape = shape),
+        color = MaterialTheme.colorScheme.surface,
+        shape = shape,
+        border = BorderStroke(CARD_BORDER, MaterialTheme.colorScheme.outlineVariant),
+    ) {
+        Row(
+            Modifier.fillMaxSize(),
+            horizontalArrangement = Arrangement.Center,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Icon(
+                imageVector = icon,
+                contentDescription = description,
+                // A control at the end of its range is dimmed rather than removed: a button
+                // that vanishes takes the remote's focus with it.
+                tint = if (enabled) {
+                    MaterialTheme.colorScheme.onSurfaceVariant
+                } else {
+                    MaterialTheme.colorScheme.outlineVariant
+                },
+                modifier = Modifier.size(SOUND_ICON),
             )
         }
     }
@@ -1383,6 +1909,12 @@ private val RAIL_CARD_V = 16.dp
 private val RAIL_LABEL = 10.5.sp
 private val RAIL_TRACKING = 0.07.em
 private val RAIL_METER = 38.dp
+
+/** The same meter, trimmed for a rail that has more to fit on it. */
+private val RAIL_METER_TV = 24.dp
+
+/** Card padding on a television, where the rail's vertical budget is tightest. */
+private val RAIL_CARD_V_TV = 11.dp
 /**
  * Four rows' worth. Enough to see that a quiet night was quiet and a bad one was not, without
  * the card taking a third of the rail.
@@ -1418,6 +1950,18 @@ private val BANNER_V_PADDING = 14.dp
 private val BANNER_TITLE = 15.sp
 private val BANNER_META = 11.5.sp
 
+/** Square enough to be a comfortable thumb target without taking a word's width. */
+private val BAR_ICON_BUTTON = 44.dp
+
+private const val QUARTER_TURN = 90
+private const val FULL_TURN = 360
+
+/** Mark, identity, then the controls wrap to the next line. */
+private const val STACKED_BAR_ITEMS = 3
+
+/** Keeps a long camera name from pushing the controls off a phone's second line. */
+private val STACKED_NAME_WIDTH = 210.dp
+
 private val BAR_BOTTOM = 26.dp
 private val BAR_H_PADDING = 18.dp
 private val BAR_V_PADDING = 14.dp
@@ -1432,8 +1976,16 @@ private val SOUND_ICON = 16.dp
 /** A 10dp slide on a banner around 66dp tall. */
 private const val BANNER_SLIDE_DIVISOR = 6
 private const val ALERT_HISTORY_MAX = 20
+/** Where JPEG blocks take over from the baby. */
+private const val MAX_ZOOM = 4f
+
+/** A press is half a turn of a pinch, so four presses cross the whole range. */
+private const val ZOOM_STEP = 0.5f
+
+/** A fifth of the window per press: enough to be worth pressing, small enough to aim with. */
+private const val PAN_STEP = 0.2f
+
 private const val STALE_FRAME_ALPHA = 0.3f
-private const val CONTROLS_TIMEOUT_MILLIS = 4000L
 private const val PING_INTERVAL_MILLIS = 5000L
 /**
  * How quiet counts as quiet, and for how long.

@@ -7,6 +7,9 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.graphics.vector.PathBuilder
 import androidx.compose.ui.graphics.vector.path
 import androidx.compose.ui.unit.dp
+import kotlin.math.PI
+import kotlin.math.cos
+import kotlin.math.sin
 
 /**
  * The app's own line icons. Six of them, and no more.
@@ -168,6 +171,60 @@ object BmpIcons {
         }
     }
 
+    /** Leave the live view. A cross, because at this size a word is three buttons wide. */
+    val Close: ImageVector by lazy {
+        bmpIcon("Close") {
+            strokePath {
+                moveTo(7f, 7f)
+                lineTo(17f, 17f)
+                moveTo(17f, 7f)
+                lineTo(7f, 17f)
+            }
+        }
+    }
+
+    /** Pan the zoomed picture. Four of one shape, because a remote has four directions. */
+    val ArrowUp: ImageVector by lazy { arrow(0f) }
+    val ArrowRight: ImageVector by lazy { arrow(90f) }
+    val ArrowDown: ImageVector by lazy { arrow(180f) }
+    val ArrowLeft: ImageVector by lazy { arrow(270f) }
+
+    /**
+     * Zoom in and out — the television's answer to a pinch.
+     *
+     * A magnifier with a plus or a minus in it. The lens is a circle and the handle a short
+     * stroke, which is as much detail as survives at 20dp; the sign inside is what separates
+     * the two, so it is drawn heavier than the glass around it.
+     */
+    val ZoomIn: ImageVector by lazy { magnifier(plus = true) }
+
+    /** The other half of the pair. */
+    val ZoomOut: ImageVector by lazy { magnifier(plus = false) }
+
+    /**
+     * Turn the picture — the viewer's rotate control.
+     *
+     * An arc with an arrowhead, which is the one rotation glyph that still reads at 20dp.
+     * A full circle with a gap reads as a loading spinner, and this control is neither
+     * loading nor waiting for anything.
+     */
+    val Rotate: ImageVector by lazy {
+        bmpIcon("Rotate") {
+            strokePath {
+                // Three quarters of a circle, open at the top right.
+                moveTo(19.5f, 8.5f)
+                arcTo(8f, 8f, 0f, isMoreThanHalf = true, isPositiveArc = true, 15.5f, 4.8f)
+            }
+            // The arrowhead, solid so it survives the stroke width.
+            solidPath {
+                moveTo(20.6f, 9.6f)
+                lineTo(14.6f, 8.2f)
+                lineTo(19.0f, 3.6f)
+                close()
+            }
+        }
+    }
+
     /**
      * Settings — the home screen's second tab.
      *
@@ -195,6 +252,45 @@ object BmpIcons {
         }
     }
 }
+
+/**
+ * A chevron pointing [degrees] clockwise from up.
+ *
+ * Drawn four times rather than rotated at the call site, so each one is a plain ImageVector
+ * that behaves like every other icon in the set — and a rotation modifier on a focusable
+ * button is one more thing to go wrong on a television.
+ */
+private fun arrow(degrees: Float): ImageVector = bmpIcon("Arrow$degrees") {
+    val radians = degrees * PI.toFloat() / 180f
+    val cosine = cos(radians)
+    val sine = sin(radians)
+    // Rotate each point about the 12,12 centre.
+    fun x(px: Float, py: Float) = 12f + (px - 12f) * cosine - (py - 12f) * sine
+    fun y(px: Float, py: Float) = 12f + (px - 12f) * sine + (py - 12f) * cosine
+
+    strokePath {
+        moveTo(x(6f, 14.5f), y(6f, 14.5f))
+        lineTo(x(12f, 8.5f), y(12f, 8.5f))
+        lineTo(x(18f, 14.5f), y(18f, 14.5f))
+    }
+}
+
+private fun magnifier(plus: Boolean): ImageVector =
+    bmpIcon(if (plus) "ZoomIn" else "ZoomOut") {
+        strokePath {
+            circle(11f, 11f, 6.4f)
+            // The handle, running out of the glass at the usual angle.
+            moveTo(15.8f, 15.8f)
+            lineTo(20.5f, 20.5f)
+            // The sign inside: a bar, and a second one crossing it when zooming in.
+            moveTo(8.2f, 11f)
+            horizontalLineTo(13.8f)
+            if (plus) {
+                moveTo(11f, 8.2f)
+                verticalLineTo(13.8f)
+            }
+        }
+    }
 
 private fun moon(filled: Boolean): ImageVector =
     bmpIcon(if (filled) "MoonFilled" else "Moon") {

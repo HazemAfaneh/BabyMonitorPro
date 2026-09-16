@@ -69,7 +69,23 @@ class BroadcastServer(
                 }
 
                 get(Bmp.PATH_STREAM) {
-                    trackViewer {
+                    // Per-viewer frame rate, for someone watching over mobile data.
+                    //
+                    // Frames are *dropped*, not re-encoded. Re-encoding per viewer would mean
+                    // decoding and recompressing every frame again on the nursery phone, for
+                    // each watcher — the one device in the system that is already doing the
+                    // most work and is usually the oldest. Dropping costs nothing and cuts
+                    // the bandwidth very nearly linearly, because every MJPEG frame is a
+                    // whole picture: half the frames is half the data.
+                    //
+                    // A viewer that asks for nothing gets everything, so this is invisible to
+                    // anyone on the same WiFi.
+                    val requestedFps = call.request.queryParameters[Bmp.QUERY_FPS]
+                        ?.toIntOrNull()
+                        ?.coerceIn(1, 60)
+                    val minIntervalMillis = requestedFps?.let { 1000L / it } ?: 0L
+                    var lastSentAt = 0L
+                    run {
                         // UPGRADE PATH: a WebRTC video track would be negotiated here instead
                         // of this multipart response; the frame flow above stays as-is.
                         call.respondBytesWriter(
@@ -83,6 +99,11 @@ class BroadcastServer(
                             // frame flow is DROP_OLDEST, so a slow viewer misses whole frames
                             // instead of receiving damaged ones.
                             frames.collect { jpeg ->
+                                if (minIntervalMillis > 0) {
+                                    val now = nowMillis()
+                                    if (now - lastSentAt < minIntervalMillis) return@collect
+                                    lastSentAt = now
+                                }
                                 // One write per frame: a part must never be split across two
                                 // suspension points where cancellation could land between them.
                                 writeFully(framePacket(jpeg))
@@ -97,6 +118,17 @@ class BroadcastServer(
                 }
 
                 webSocket(Bmp.PATH_CONTROL) {
+                    // Viewers are counted here, not on /stream.
+                    //
+                    // A viewer opens exactly one control socket and holds it for as long as
+                    // it is watching. The video connection is not like that at all: it is
+                    // reopened on every blink, every reconnect and every backgrounding, and
+                    // each of those incremented the count on the way in and decremented it
+                    // on the way out — so the camera screen showed "2 watching" for one
+                    // television, and a viewer that had walked out of WiFi range stayed in
+                    // the count until its socket finally timed out. Counting the channel
+                    // that is *meant* to be long-lived is what makes the number true.
+                    trackViewer {
                     send(Frame.Text(statusProvider().encode()))
 
                     val pump = scope.launch {
@@ -116,6 +148,7 @@ class BroadcastServer(
                         }
                     } finally {
                         pump.cancel()
+                    }
                     }
                 }
             }
