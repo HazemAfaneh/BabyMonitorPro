@@ -12,6 +12,11 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.unit.IntSize
+import androidx.compose.foundation.Canvas
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -92,6 +97,10 @@ import com.hazemafaneh.babymonitorpro.store.ListenOnAlert
 import org.koin.compose.koinInject
 import com.hazemafaneh.babymonitorpro.protocol.ControlMessage
 import com.hazemafaneh.babymonitorpro.ui.KeepScreenAwake
+import com.hazemafaneh.babymonitorpro.ui.components.LevelMarker
+import com.hazemafaneh.babymonitorpro.ui.components.soundLevelPercent
+import com.hazemafaneh.babymonitorpro.ui.components.motionLevelPercent
+import com.hazemafaneh.babymonitorpro.ui.components.thresholdForSensitivity
 import com.hazemafaneh.babymonitorpro.ui.components.MoonButton
 import com.hazemafaneh.babymonitorpro.ui.components.focusAnchor
 import com.hazemafaneh.babymonitorpro.ui.components.focusRing
@@ -570,6 +579,7 @@ fun LiveViewScreen(
         // it, so nothing ever overlaps the frame.
         if (railPresent) {
             SideRail(
+                status = cameraStatus,
                 soundAnchor = soundAnchor,
                 onCameraControls = if (cameraStatus != null) {
                     { showCameraControls = true }
@@ -1234,24 +1244,151 @@ private fun BarControls(
  */
 @Composable
 private fun BatteryLabel(battery: BatteryState, modifier: Modifier = Modifier) {
+    // Always, once it is known.
+    //
+    // It appeared only when low or charging, on the theory that a number nobody needs is
+    // noise. That is wrong for this particular number: the question a parent has about the
+    // nursery phone is "will it still be filming at 4am", and an indicator that shows up only
+    // once the answer is already no does not let anyone act in time.
     if (!battery.known) return
-    if (!battery.low && !battery.charging) return
-    val tone = if (battery.low) {
-        MaterialTheme.colorScheme.error
-    } else {
-        BmpTheme.semantic.statusLive
+    val tone = when {
+        battery.low -> MaterialTheme.colorScheme.error
+        battery.charging -> BmpTheme.semantic.statusLive
+        // Neither draining dangerously nor filling: a plain reading, in the colour the rest
+        // of this screen's metadata uses.
+        else -> MaterialTheme.colorScheme.onSurfaceVariant
     }
-    Text(
-        text = if (battery.charging) "${battery.percent}% · charging" else "${battery.percent}%",
-        style = MaterialTheme.typography.labelMedium.copy(fontSize = BAR_ADDRESS),
-        fontWeight = FontWeight.Bold,
-        color = tone,
-        // One line, never wrapped. It sits beside a name of unknown length, and a battery
-        // reading that breaks across lines is worse than no battery reading.
-        maxLines = 1,
-        softWrap = false,
-        modifier = modifier,
-    )
+    Row(modifier, verticalAlignment = Alignment.CenterVertically) {
+        BatteryGlyph(percent = battery.percent, charging = battery.charging, tone = tone)
+        Spacer(Modifier.size(Space.xxs))
+        Text(
+            text = if (battery.charging) "${battery.percent}% · charging" else "${battery.percent}%",
+            style = MaterialTheme.typography.labelMedium.copy(fontSize = BAR_ADDRESS),
+            fontWeight = FontWeight.Bold,
+            color = tone,
+            // One line, never wrapped. It sits beside a name of unknown length, and a battery
+            // reading that breaks across lines is worse than no battery reading.
+            maxLines = 1,
+            softWrap = false,
+        )
+    }
+}
+
+/**
+ * One reading in the rail: what the room is doing, and the line that would alert on it.
+ *
+ * The mark is the same one the settings screen draws over its sliders, so a parent who set a
+ * threshold there recognises the picture here — and can see, without doing arithmetic,
+ * whether the room is anywhere near it.
+ */
+@Composable
+private fun RailLevel(
+    label: String,
+    reading: Float?,
+    threshold: Int?,
+    absent: String,
+) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Text(
+            text = label,
+            style = MaterialTheme.typography.labelMedium.copy(fontSize = RAIL_STRIP_DETAIL),
+            fontWeight = FontWeight.SemiBold,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.width(RAIL_LEVEL_LABEL),
+        )
+        if (reading == null || threshold == null) {
+            // Never a mark pinned at zero: that reads as a silent, still room rather than as
+            // nothing measured, and those are opposite facts.
+            Text(
+                text = absent,
+                style = MaterialTheme.typography.bodySmall.copy(fontSize = RAIL_STRIP_DETAIL),
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            return@Row
+        }
+        LevelMarker(
+            levelPercent = reading,
+            thresholdPercent = threshold,
+            modifier = Modifier.weight(1f),
+        )
+        Text(
+            text = "${reading.toInt()}%",
+            style = MaterialTheme.typography.labelMedium.copy(
+                fontFamily = FontFamily.Monospace,
+                fontSize = RAIL_STRIP_DETAIL,
+            ),
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(start = Space.xxs),
+        )
+    }
+}
+
+/**
+ * A battery, drawn rather than lettered.
+ *
+ * "53%" on its own is a percentage of something unstated — of the picture that changed, of the
+ * room's loudness, of a dozen other numbers this app shows. The cell shape says which, in less
+ * width than the word would take, and it is the one glyph every parent already knows.
+ *
+ * It fills to match the reading instead of being a fixed outline: at three metres the *shape*
+ * carries the state and the digits merely confirm it, which is the right way round for a
+ * thing read at a glance across a dark room. Charging adds a bolt, because a phone at 12%
+ * filling up and a phone at 12% draining are opposite facts.
+ */
+@Composable
+private fun BatteryGlyph(percent: Int, charging: Boolean, tone: Color) {
+    Canvas(Modifier.size(width = BATTERY_WIDTH, height = BATTERY_HEIGHT)) {
+        val stroke = BATTERY_STROKE.toPx()
+        val nub = size.width * BATTERY_NUB_FRACTION
+        val bodyWidth = size.width - nub
+        val radius = CornerRadius(stroke * 1.5f, stroke * 1.5f)
+
+        drawRoundRect(
+            color = tone,
+            topLeft = Offset(stroke / 2f, stroke / 2f),
+            size = Size(bodyWidth - stroke, size.height - stroke),
+            cornerRadius = radius,
+            style = Stroke(width = stroke),
+        )
+
+        // The terminal, centred on the right-hand edge.
+        drawRoundRect(
+            color = tone,
+            topLeft = Offset(bodyWidth, size.height * 0.3f),
+            size = Size(nub, size.height * 0.4f),
+            cornerRadius = CornerRadius(stroke, stroke),
+        )
+
+        // The charge itself, inset so it never touches the wall it sits in.
+        val inset = stroke * 2f
+        val usable = bodyWidth - stroke - inset * 2f
+        val filled = usable * (percent.coerceIn(0, 100) / 100f)
+        if (filled > 0f) {
+            drawRoundRect(
+                color = tone,
+                topLeft = Offset(stroke / 2f + inset, stroke / 2f + inset),
+                size = Size(filled, size.height - stroke - inset * 2f),
+                cornerRadius = CornerRadius(stroke, stroke),
+            )
+        }
+
+        if (charging) {
+            // A bolt across the cell, drawn in the ground colour so it reads as a cut-out of
+            // the charge rather than as a mark floating on top of it.
+            val boltPath = Path().apply {
+                moveTo(bodyWidth * 0.58f, size.height * 0.08f)
+                lineTo(bodyWidth * 0.36f, size.height * 0.56f)
+                lineTo(bodyWidth * 0.52f, size.height * 0.56f)
+                lineTo(bodyWidth * 0.40f, size.height * 0.96f)
+                lineTo(bodyWidth * 0.66f, size.height * 0.44f)
+                lineTo(bodyWidth * 0.50f, size.height * 0.44f)
+                close()
+            }
+            drawPath(boltPath, color = tone, style = Stroke(width = stroke))
+        }
+    }
 }
 
 /**
@@ -1331,6 +1468,7 @@ private fun SoundPill(
  */
 @Composable
 private fun SideRail(
+    status: ControlMessage.Status?,
     soundAnchor: androidx.compose.ui.focus.FocusRequester,
     onCameraControls: (() -> Unit)?,
     onRotate: () -> Unit,
@@ -1380,18 +1518,14 @@ private fun SideRail(
                     color = MaterialTheme.colorScheme.onSurface,
                     maxLines = 1,
                 )
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(
-                        text = "On your WiFi · $address",
-                        style = MaterialTheme.typography.bodySmall.copy(fontSize = RAIL_ADDRESS),
-                        fontWeight = FontWeight.SemiBold,
-                        color = BmpTheme.semantic.privacy,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.weight(1f, fill = false),
-                    )
-                    BatteryLabel(battery, Modifier.padding(start = Space.xs))
-                }
+                Text(
+                    text = "On your WiFi · $address",
+                    style = MaterialTheme.typography.bodySmall.copy(fontSize = RAIL_ADDRESS),
+                    fontWeight = FontWeight.SemiBold,
+                    color = BmpTheme.semantic.privacy,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
             }
             Spacer(Modifier.size(Space.xs))
             // A tablet left on a counter overnight is the strongest case for night mode in
@@ -1406,31 +1540,50 @@ private fun SideRail(
             fill = MaterialTheme.colorScheme.surface,
             border = MaterialTheme.colorScheme.outlineVariant,
             labelColor = MaterialTheme.colorScheme.onSurfaceVariant,
+            // Beside the heading rather than beside the address. The address answers "which
+            // device", read once; the battery answers "how long has it got", which changes
+            // all night — and this is the card a parent is already watching.
+            trailing = { BatteryLabel(battery) },
         ) {
-            if (audioOn && audioAvailable) {
-                // Shorter on a television, where the rail also has to hold zoom, pan, sound
-                // and three actions. The meter is a glance, not a reading — fourteen bars at
-                // 24dp say "quiet" or "not quiet" just as well as at 38, and the height they
-                // give back goes to the alert history and the controls.
-                SoundMeter(
-                    level = level,
-                    sensitivity = METER_SENSITIVITY,
-                    height = if (isTelevision) RAIL_METER_TV else RAIL_METER,
-                )
+            // Both readings, against the lines that would alert on them — the same picture
+            // the settings screen draws, in the place a parent is actually watching.
+            //
+            // The sound level comes from this device's own audio when the sound is on, and
+            // from the camera's report otherwise; the movement level always comes from the
+            // camera, which is the only device analysing frames. Both fall back to the
+            // camera's status, which arrives every couple of seconds whether or not anybody
+            // is listening.
+            val soundReading = if (audioOn && audioAvailable) {
+                soundLevelPercent(level)
             } else {
-                // The meter reads the sound this device is receiving, so with sound off
-                // there is nothing to read. A flat meter here would say "quiet room" when
-                // what it means is "not listening" — the one lie this screen must not tell.
-                Text(
-                    text = if (audioAvailable) {
-                        "Turn sound on to hear the room."
-                    } else {
-                        MISSING_MIC
-                    },
-                    style = MaterialTheme.typography.bodySmall.copy(fontSize = RAIL_STRIP_TEXT),
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
+                status?.soundLevel?.takeIf { it >= 0f }?.let(::soundLevelPercent)
             }
+            val motionReading = status?.motionLevel?.takeIf { it >= 0f }?.let(::motionLevelPercent)
+
+            // The fourteen-bar history is gone from the rail, replaced by these two marks.
+            //
+            // Keeping both made the card noticeably taller, and the bars were the half that
+            // could be spared: they show one sensor over time, where the marks show *both*
+            // against the lines that would actually alert. The settings screen still has the
+            // bars, which is where a parent is choosing a threshold rather than watching a
+            // room.
+            RailLevel(
+                label = "Sound",
+                reading = soundReading,
+                threshold = status?.let { thresholdForSensitivity(it.soundSensitivity) },
+                absent = if (audioAvailable) {
+                    "Not reported by this camera"
+                } else {
+                    MISSING_MIC
+                },
+            )
+            Spacer(Modifier.height(Space.xs))
+            RailLevel(
+                label = "Movement",
+                reading = motionReading,
+                threshold = status?.let { thresholdForSensitivity(it.motionSensitivity) },
+                absent = "Not reported by this camera",
+            )
         }
 
         Spacer(Modifier.height(RAIL_GAP))
@@ -1657,6 +1810,8 @@ private fun RailCard(
     border: Color,
     labelColor: Color,
     modifier: Modifier = Modifier,
+    /** Drawn at the right of the card's heading row — a reading that belongs with the title. */
+    trailing: (@Composable () -> Unit)? = null,
     content: @Composable () -> Unit,
 ) {
     Surface(
@@ -1671,15 +1826,25 @@ private fun RailCard(
                 vertical = if (isTelevision) RAIL_CARD_V_TV else RAIL_CARD_V,
             ),
         ) {
-            Text(
-                text = title.uppercase(),
-                style = MaterialTheme.typography.labelLarge.copy(
-                    fontSize = RAIL_LABEL,
-                    letterSpacing = RAIL_TRACKING,
-                ),
-                fontWeight = FontWeight.Bold,
-                color = labelColor,
-            )
+            Row(
+                Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    text = title.uppercase(),
+                    style = MaterialTheme.typography.labelLarge.copy(
+                        fontSize = RAIL_LABEL,
+                        letterSpacing = RAIL_TRACKING,
+                    ),
+                    fontWeight = FontWeight.Bold,
+                    color = labelColor,
+                )
+                // The card's own heading row is the one piece of horizontal space in the rail
+                // that is always present and never full — the right place for a reading that
+                // has to be visible without competing with anything.
+                trailing?.invoke()
+            }
             Spacer(Modifier.height(Space.sm))
             content()
         }
@@ -1922,6 +2087,9 @@ private val RAIL_CARD_V_TV = 11.dp
 private val RAIL_STRIP_HEIGHT = 168.dp
 
 private val RAIL_STRIP_DETAIL = 11.sp
+
+/** Wide enough for "Movement", so the two marks line up under each other. */
+private val RAIL_LEVEL_LABEL = 72.dp
 private val RAIL_STRIP_TEXT = 12.5.sp
 private val RAIL_STRIP_TIME = 11.sp
 private val RAIL_STRIP_ICON = 15.dp
@@ -1952,6 +2120,12 @@ private val BANNER_META = 11.5.sp
 
 /** Square enough to be a comfortable thumb target without taking a word's width. */
 private val BAR_ICON_BUTTON = 44.dp
+
+/** A cell a little wider than it is tall, at the size a line of metadata can carry. */
+private val BATTERY_WIDTH = 20.dp
+private val BATTERY_HEIGHT = 11.dp
+private val BATTERY_STROKE = 1.4.dp
+private const val BATTERY_NUB_FRACTION = 0.1f
 
 private const val QUARTER_TURN = 90
 private const val FULL_TURN = 360

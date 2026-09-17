@@ -1341,6 +1341,67 @@ App launch, and it is the device used as the camera.
 
 ---
 
+## Session 14 — 2026-09-17 — the battery, and the room at a glance
+
+### The camera's battery is now always on screen
+
+**Your report:** it shows next to the WiFi line, and not always.
+
+It appeared only when low or charging, on the theory that a number nobody needs is noise. That
+is the wrong rule for this one: the question a parent has about the nursery phone is "will it
+still be filming at 4am", and an indicator that appears once the answer is already *no* is too
+late to act on. It is now always shown once known, with the colour still carrying the state —
+error red under 20% and draining, marigold while charging, plain grey otherwise.
+
+It also moved, per your suggestion, to the right of the **"The room right now"** heading. The
+address answers "which device", which is read once; the battery changes all night, and that
+card is the one already being watched.
+
+### A drawn battery, not just a number
+
+**Your ask:** show an icon so it is obvious what the number is.
+
+"57%" alone is a percentage of something unstated — this screen is full of percentages now.
+The cell is drawn rather than lettered, **fills in proportion to the charge**, and gains a bolt
+when charging, so the shape carries the state at three metres and the digits merely confirm
+it.
+
+### Bug: a charging phone reported as draining
+
+**Your push-back:** "why fake it, the Huawei is connected to this PC and charging."
+
+Right, and the app disagreed with the phone. `dumpsys battery` on that device says
+`status: 2` (charging) and `AC powered: true`, while `BatteryManager.isCharging()` returned
+**false** — so the viewer showed a draining battery for a phone on a charger, which is exactly
+the distinction the reading exists to make.
+
+Now read from the sticky `ACTION_BATTERY_CHANGED` broadcast, which is the source Android
+itself uses: it needs no registration, and it carries status, plug and level together so the
+three agree. Plugged-and-full counts as charging, because a phone at 100% on a charger is not
+draining. Verified on the Huawei afterwards: `56 charging`.
+
+### "The room right now" shows both sensors
+
+**Your ask:** show the movement and sound bars there, as in settings.
+
+The card carried one thing — a sound meter fed by *this device's* audio, so it went blank
+whenever the sound was off. It now shows **Sound** and **Movement**, each as the same mark the
+settings sliders carry: the live reading, a decaying peak, and the alert threshold's position,
+so a parent can see whether the room is anywhere near the line they set.
+
+Both readings come from the camera's own status, which arrives every couple of seconds
+regardless of whether this viewer is playing audio; with the sound on, the sound figure
+switches to the local audio for smoother movement. A camera that reports nothing gets a
+sentence saying so rather than a mark pinned at zero — a mark at zero reads as a silent, still
+room, and those are opposite facts.
+
+**Keeping the card its old size:** the fourteen-bar history was dropped from the rail to make
+room. It was the half that could be spared — it shows one sensor over time, where the two
+marks show both against the lines that matter. The settings screen still has the bars, which
+is where a threshold is chosen rather than where a room is watched.
+
+---
+
 ## Needs a Mac — the complete iOS list
 
 Everything below is iOS-only and **none of it has been compiled**, because iOS targets cannot
