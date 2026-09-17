@@ -33,7 +33,7 @@ actual fun notifyAlert(endpoint: CameraEndpoint, alert: CameraAlert) {
         // Which camera, which is the question the moment a second one exists. It goes third
         // because with one camera it is the least interesting line on the notification.
         .setSubText(endpoint.name)
-        .setSmallIcon(android.R.drawable.stat_notify_more)
+        .setSmallIcon(notificationIcon(context))
         .setCategory(Notification.CATEGORY_ALARM)
         // Distinct per kind, so a sound alert never replaces a motion one in the shade. They
         // are answers to different questions and a parent may want both.

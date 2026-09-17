@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!--
+      The launch screen, on the platforms that have one.
+
+      A television needs this more than a phone does: the app takes a moment to come up, and a
+      TV launcher shows a blank frame in the meantime, which on a 55" screen reads as the box
+      having failed. The system draws the same cot on the same yellow, so the gap between
+      pressing the button and seeing the app is the app's own colour rather than black.
+    -->
+    <style name="Theme.BabyMonitorPro" parent="@android:style/Theme.Material.NoActionBar">
+        <item name="android:windowSplashScreenBackground">@color/splash_ground</item>
+        <item name="android:windowSplashScreenAnimatedIcon">@drawable/ic_launcher_foreground</item>
+        <item name="android:windowBackground">@color/splash_ground</item>
+    </style>
+</resources>

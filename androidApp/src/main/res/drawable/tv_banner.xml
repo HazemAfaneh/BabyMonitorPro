@@ -1,15 +1,15 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-  The Android TV home-row banner: 320x180, drawn rather than shipped as a PNG so it scales
-  to whatever density the panel reports and costs nothing in the APK.
+  The Android TV home-row banner, 320x180.
 
-  The launcher draws it at about 5% of the screen width, so it carries the mark and the name
-  and nothing else - a banner with a tagline on it is a banner nobody can read from a sofa.
+  Drawn rather than shipped as a PNG so it scales to whatever density the panel reports. The
+  launcher draws it small and from across a room, so it carries the mark alone — a banner with
+  a tagline on it is a banner nobody can read from a sofa.
 -->
 <layer-list xmlns:android="http://schemas.android.com/apk/res/android">
     <item>
         <shape android:shape="rectangle">
-            <solid android:color="#FFF6EFE2" />
+            <solid android:color="#FFFFD84D" />
         </shape>
     </item>
     <item

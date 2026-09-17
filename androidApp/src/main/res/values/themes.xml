@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!--
+      The app's window theme.
+
+      Below API 31 this is simply the old theme under a name of our own, so the manifest has
+      one thing to point at; the splash attributes live in values-v31 alongside the platform
+      that understands them.
+    -->
+    <style name="Theme.BabyMonitorPro" parent="@android:style/Theme.Material.NoActionBar">
+        <item name="android:windowBackground">@color/splash_ground</item>
+    </style>
+</resources>

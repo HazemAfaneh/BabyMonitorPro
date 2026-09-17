@@ -29,6 +29,8 @@ actual fun readBattery(): BatteryState {
         val plugged = sticky.getIntExtra(BatteryManager.EXTRA_PLUGGED, 0)
         val level = sticky.getIntExtra(BatteryManager.EXTRA_LEVEL, -1)
         val scale = sticky.getIntExtra(BatteryManager.EXTRA_SCALE, -1)
+        // Tenths of a degree, per the broadcast's contract.
+        val tenths = sticky.getIntExtra(BatteryManager.EXTRA_TEMPERATURE, -1)
 
         val percent = if (level >= 0 && scale > 0) level * 100 / scale else -1
         // Plugged in counts as charging even when the status says FULL: a phone at 100% on a
@@ -38,7 +40,13 @@ actual fun readBattery(): BatteryState {
             status == BatteryManager.BATTERY_STATUS_FULL ||
             plugged != 0
 
-        if (percent >= 0) return BatteryState(percent = percent, charging = charging)
+        if (percent >= 0) {
+            return BatteryState(
+                percent = percent,
+                charging = charging,
+                temperatureC = if (tenths > 0) tenths / 10f else -1f,
+            )
+        }
     }
 
     // Nothing sticky yet — very early in the process life. Ask the service directly.

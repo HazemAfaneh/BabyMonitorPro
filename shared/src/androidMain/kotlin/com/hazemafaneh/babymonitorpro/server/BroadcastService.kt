@@ -102,7 +102,7 @@ class BroadcastService : Service() {
                 if (deviceName.isBlank()) "Streaming to your WiFi network"
                 else "$deviceName is streaming to your WiFi network",
             )
-            .setSmallIcon(android.R.drawable.presence_video_online)
+            .setSmallIcon(com.hazemafaneh.babymonitorpro.notify.notificationIcon(this))
             .setOngoing(true)
             .build()
 

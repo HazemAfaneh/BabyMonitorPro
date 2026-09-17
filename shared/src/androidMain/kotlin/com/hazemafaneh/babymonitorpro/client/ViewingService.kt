@@ -58,7 +58,7 @@ class ViewingService : Service() {
                 if (cameraName.isBlank()) "Watching the nursery" else "Watching $cameraName",
             )
             .setContentText("Sound and movement alerts are on")
-            .setSmallIcon(android.R.drawable.presence_video_online)
+            .setSmallIcon(com.hazemafaneh.babymonitorpro.notify.notificationIcon(this))
             .setOngoing(true)
             .build()
 

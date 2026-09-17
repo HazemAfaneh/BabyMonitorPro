@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  The launcher glyph: a cot, from Google's Material Symbols (Apache 2.0).
+
+  Drawn into the middle of the 108dp adaptive canvas rather than filling it. A launcher masks
+  this square to whatever shape the device prefers — circle, squircle, rounded square — and
+  anything outside the inner safe zone is cropped on some phones and not others.
+
+  Material Symbols are published on a 960x960 grid with a -960 y-origin, so the group places
+  and scales the art rather than the path being rewritten: swapping in another symbol is then
+  a matter of replacing one attribute.
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <group
+        android:scaleX="0.0625"
+        android:scaleY="0.0625"
+        android:translateX="24"
+        android:translateY="84">
+        <path
+            android:fillColor="#FF5A4415"
+            android:pathData="M480-80q-69 0-132.5-23T230-168q-14-11-15-28.5t11-29.5q12-12 28.5-12t30.5 11q8 7 17 13t18 11v-117h-80q-33 0-56.5-23.5T160-400v-240q0-66 47-113t113-47h120q17 0 28.5 11.5T480-760v160h240q33 0 56.5 23.5T800-520v120q0 33-23.5 56.5T720-320h-80v117q10-6 19-12t18-13q13-11 30-10t28 12q12 12 11 28.5T732-170q-54 43-118.5 66.5T480-80Zm0-80q20 0 40-2.5t40-7.5v-150H400v150q20 5 40 7.5t40 2.5Z" />
+    </group>
+</vector>

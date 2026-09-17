@@ -43,6 +43,14 @@ sealed class ControlMessage {
         val batteryPercent: Int = -1,
         /** True when that battery is on a charger, which is what makes a low number fine. */
         val charging: Boolean = false,
+        /**
+         * The camera device's temperature in Celsius, or -1 where unknown.
+         *
+         * A phone encoding video under a blanket gets hot, and hot is how a night ends early
+         * — thermal throttling first, then a shutdown. It rides with the battery because it
+         * comes from the same reading and answers the same question.
+         */
+        val temperatureC: Float = -1f,
         /** Which lens is live, so a viewer can offer to switch it. */
         val usingFrontCamera: Boolean = true,
         /** False when the camera device has only one lens. */
@@ -151,6 +159,8 @@ data class DeviceInfoResponse(
     /** Battery of the device doing the filming, 0..100, or -1 where it cannot be read. */
     val batteryPercent: Int = -1,
     val charging: Boolean = false,
+    /** That device's temperature in Celsius, or -1 where unknown. */
+    val temperatureC: Float = -1f,
 )
 
 /**

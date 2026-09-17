@@ -1402,6 +1402,85 @@ is where a threshold is chosen rather than where a room is watched.
 
 ---
 
+## Session 15 — 2026-09-17 — temperature, and an icon of its own
+
+### The camera's temperature, beside its battery
+
+**Your ask:** show the phone's temperature so it is obvious when it goes past normal.
+
+Free to add — the sticky battery broadcast already carries it, so no new permission and no
+extra read. The camera reports it in `/info` and in every status; the viewer draws it beside
+the charge.
+
+**The nursery phone is the one device being asked to encode video for hours** while lying
+face-down on a shelf, often under bedding and often on a charger at the same time. That is how
+phones cook, and it is the other half of "will this still be working at 4am".
+
+The bands, which are what make the number actionable:
+
+| Reading | Meaning |
+|---|---|
+| 20–35°C | Normal. Encoding video sits in the low thirties even in a cool room. |
+| 35–40°C | Working hard. Fine with air around it. |
+| **40–45°C** | Warm — marigold. Thermal throttling starts here; worth moving it off bedding or off the charger. |
+| **45°C+** | Hot — red. Sustained time here degrades the battery, and Android eventually shuts the phone down. |
+
+Silent grey in the thirties, so it says nothing until there is something to act on. Your Huawei
+read 34°C while streaming and charging; the Tecno 34.6°C.
+
+### Bug: a charging phone was shown as draining
+
+**Your push-back:** "why fake it, the Huawei is connected to this PC and charging."
+
+The app disagreed with the phone. `dumpsys battery` reported `status: 2` (charging) and
+`AC powered: true`, while `BatteryManager.isCharging()` returned **false** — so a phone on a
+charger showed as draining, which is the one distinction the reading exists to make.
+
+Now read from the sticky `ACTION_BATTERY_CHANGED` broadcast, the source Android itself uses:
+no registration, and status, plug, level and temperature arrive together so they agree with
+each other. Plugged-and-full counts as charging. Verified afterwards: `56 charging`.
+
+### Both readings, drawn rather than lettered
+
+The battery is a cell that **fills in proportion to the charge** and gains a bolt when
+charging; the temperature has a thermometer that fills between 20°C and 50°C. "57% 34°" needs
+a glyph on each half or the degrees read as a second percentage — and at three metres the
+shapes carry the state while the digits merely confirm it.
+
+The word "charging" is gone: the bolt says it, and the row has three readings to fit.
+
+### An app icon, and everywhere it belongs
+
+**Your ask:** fetch a free icon; you picked the crib.
+
+From Google's **Material Symbols (Apache 2.0)** — free to use and redistribute. Drawn in the
+app's own palette (joy yellow ground, the brown the teddy plate uses) so the home screen and
+the app are recognisably one thing.
+
+| Where | What it gets |
+|---|---|
+| Launcher, phone and TV | Adaptive icon, all densities, via `mipmap-anydpi-v26` |
+| Android 13+ themed icons | A `<monochrome>` layer, so launchers recolour it to the wallpaper |
+| Android TV home row | `tv_banner.xml`, drawn as a vector so it scales to any panel |
+| **Launch screen** | New `Theme.BabyMonitorPro`; on API 31+ the system draws the same crib on the same yellow — so the wait before a TV shows the app is the app's colour, not black |
+| Alert notifications | `ic_notification.xml`, a white silhouette — Android treats a small icon as a mask and discards colour |
+| Broadcasting service | The same mark, replacing Android's stock `presence_video_online` |
+| Watching service | The same |
+| Live Update chip | Unchanged — `ic_live_activity` is a *status* dot, not the app mark |
+
+Two things worth remembering from doing it:
+
+- **Gradle held stale resource state** for the name `ic_launcher_foreground`, because it used
+  to live in `drawable-v24` and moved to `drawable`. Linking claimed the file did not exist
+  while `aapt2 compile` handled it perfectly on its own. It survived deleting the module's
+  entire build directory and only cleared with `--rerun-tasks`.
+- **`:shared` cannot see the app module's `R`**, so the notification icon is resolved by name
+  at post time — the pattern `ic_live_activity` already established in this codebase — with a
+  platform fallback, because a cosmetic glyph problem is better than an exception while
+  posting an alert.
+
+---
+
 ## Needs a Mac — the complete iOS list
 
 Everything below is iOS-only and **none of it has been compiled**, because iOS targets cannot

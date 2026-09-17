@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- The joy accent, shared by the launcher icon, the TV banner and the launch screen. -->
+    <color name="splash_ground">#FFFFD84D</color>
+</resources>

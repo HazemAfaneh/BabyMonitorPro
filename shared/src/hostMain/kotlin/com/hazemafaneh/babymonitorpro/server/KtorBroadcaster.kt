@@ -462,6 +462,7 @@ class KtorBroadcaster : Broadcaster {
             // number — and reading a battery percentage costs a system property lookup.
             batteryPercent = battery.percent,
             charging = battery.charging,
+            temperatureC = battery.temperatureC,
             usingFrontCamera = snapshot.usingFrontCamera,
             canSwitchCamera = snapshot.canSwitchCamera,
             torchOn = snapshot.torchOn,
@@ -484,6 +485,7 @@ class KtorBroadcaster : Broadcaster {
             audioSampleRate = current?.audio?.sampleRate ?: 16_000,
             batteryPercent = battery.percent,
             charging = battery.charging,
+            temperatureC = battery.temperatureC,
         )
     }
 

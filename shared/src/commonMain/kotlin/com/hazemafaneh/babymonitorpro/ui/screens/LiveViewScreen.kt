@@ -219,10 +219,15 @@ fun LiveViewScreen(
     }
     var showCameraControls by remember(endpoint.id) { mutableStateOf(false) }
 
-    val battery = remember(cameraStatus?.batteryPercent, cameraStatus?.charging) {
+    val battery = remember(
+        cameraStatus?.batteryPercent,
+        cameraStatus?.charging,
+        cameraStatus?.temperatureC,
+    ) {
         BatteryState(
             percent = cameraStatus?.batteryPercent ?: -1,
             charging = cameraStatus?.charging ?: false,
+            temperatureC = cameraStatus?.temperatureC ?: -1f,
         )
     }
 
@@ -1262,7 +1267,9 @@ private fun BatteryLabel(battery: BatteryState, modifier: Modifier = Modifier) {
         BatteryGlyph(percent = battery.percent, charging = battery.charging, tone = tone)
         Spacer(Modifier.size(Space.xxs))
         Text(
-            text = if (battery.charging) "${battery.percent}% · charging" else "${battery.percent}%",
+            // No "charging" in words: the bolt in the cell says it, and the two together were
+            // saying one thing twice in a row that has three readings to fit.
+            text = "${battery.percent}%",
             style = MaterialTheme.typography.labelMedium.copy(fontSize = BAR_ADDRESS),
             fontWeight = FontWeight.Bold,
             color = tone,
@@ -1271,6 +1278,34 @@ private fun BatteryLabel(battery: BatteryState, modifier: Modifier = Modifier) {
             maxLines = 1,
             softWrap = false,
         )
+        if (battery.temperatureKnown) {
+            Spacer(Modifier.size(Space.xs))
+            ThermometerGlyph(
+                temperatureC = battery.temperatureC,
+                tone = when {
+                    battery.hot -> MaterialTheme.colorScheme.error
+                    battery.warm -> BmpTheme.semantic.statusLive
+                    else -> MaterialTheme.colorScheme.onSurfaceVariant
+                },
+            )
+            Spacer(Modifier.size(Space.xxs))
+            Text(
+                // Whole degrees. A tenth of a degree is precision this reading does not have
+                // and nobody acts on.
+                text = "${battery.temperatureC.toInt()}°",
+                style = MaterialTheme.typography.labelMedium.copy(fontSize = BAR_ADDRESS),
+                fontWeight = FontWeight.Bold,
+                // Silent in the thirties, which is where a phone encoding video normally
+                // lives. It only takes a colour once it is somewhere a parent might act on.
+                color = when {
+                    battery.hot -> MaterialTheme.colorScheme.error
+                    battery.warm -> BmpTheme.semantic.statusLive
+                    else -> MaterialTheme.colorScheme.onSurfaceVariant
+                },
+                maxLines = 1,
+                softWrap = false,
+            )
+        }
     }
 }
 
@@ -1322,6 +1357,57 @@ private fun RailLevel(
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.padding(start = Space.xxs),
         )
+    }
+}
+
+/**
+ * A thermometer, filling with the heat.
+ *
+ * Paired with the battery cell so the two readings read as a row of instruments rather than
+ * as a string of numbers — "57% 34°" needs a glyph on each half or the degrees look like a
+ * second percentage.
+ *
+ * The column fills between [COOL_C] and [SCALE_TOP_C] rather than from zero: a phone is never
+ * at 0°C, and a scale that starts there would leave every real reading in the bottom third
+ * where nothing is distinguishable.
+ */
+@Composable
+private fun ThermometerGlyph(temperatureC: Float, tone: Color) {
+    Canvas(Modifier.size(width = THERMO_WIDTH, height = THERMO_HEIGHT)) {
+        val stroke = BATTERY_STROKE.toPx()
+        val stemWidth = size.width * 0.44f
+        val stemLeft = (size.width - stemWidth) / 2f
+        val bulbRadius = size.width * 0.5f
+        val bulbCentre = Offset(size.width / 2f, size.height - bulbRadius)
+        val stemTop = stroke / 2f
+        val stemBottom = bulbCentre.y - bulbRadius * 0.2f
+
+        // The stem, open at the bottom where the bulb takes over.
+        drawRoundRect(
+            color = tone,
+            topLeft = Offset(stemLeft, stemTop),
+            size = Size(stemWidth, stemBottom - stemTop),
+            cornerRadius = CornerRadius(stemWidth / 2f, stemWidth / 2f),
+            style = Stroke(width = stroke),
+        )
+
+        // The mercury: a full bulb, and a column proportional to the reading.
+        drawCircle(color = tone, radius = bulbRadius, center = bulbCentre)
+
+        val span = (SCALE_TOP_C - COOL_C)
+        val fraction = ((temperatureC - COOL_C) / span).coerceIn(0f, 1f)
+        val inset = stroke * 1.6f
+        val trackTop = stemTop + inset
+        val trackBottom = stemBottom
+        val columnHeight = (trackBottom - trackTop) * fraction
+        if (columnHeight > 0f) {
+            drawRoundRect(
+                color = tone,
+                topLeft = Offset(stemLeft + inset, trackBottom - columnHeight),
+                size = Size(stemWidth - inset * 2f, columnHeight),
+                cornerRadius = CornerRadius(stemWidth, stemWidth),
+            )
+        }
     }
 }
 
@@ -2126,6 +2212,13 @@ private val BATTERY_WIDTH = 20.dp
 private val BATTERY_HEIGHT = 11.dp
 private val BATTERY_STROKE = 1.4.dp
 private const val BATTERY_NUB_FRACTION = 0.1f
+
+private val THERMO_WIDTH = 8.dp
+private val THERMO_HEIGHT = 13.dp
+
+/** Where the scale starts and ends — the range a phone actually occupies. */
+private const val COOL_C = 20f
+private const val SCALE_TOP_C = 50f
 
 private const val QUARTER_TURN = 90
 private const val FULL_TURN = 360
