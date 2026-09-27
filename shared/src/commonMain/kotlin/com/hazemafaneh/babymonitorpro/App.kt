@@ -120,8 +120,10 @@ fun App() {
                     CameraScreen(
                         night = night,
                         onNightChanged = setNight,
+                        // No onStop: stopping is a toggle on the screen itself now, and it
+                        // leaves the parent where they were rather than throwing them back
+                        // to the role picker.
                         onSettings = { navController.navigate(Routes.CAMERA_SETTINGS) },
-                        onStop = { navController.popBackStack(Routes.ROLE, inclusive = false) },
                     )
                 }
 
@@ -130,9 +132,9 @@ fun App() {
                         night = night,
                         onNightChanged = setNight,
                         onBack = { navController.popBackStack() },
-                        onStop = {
-                            navController.popBackStack(Routes.ROLE, inclusive = false)
-                        },
+                        // Back to the camera screen, which now shows an idle camera and a
+                        // Start button — rather than all the way out to the role picker.
+                        onStop = { navController.popBackStack() },
                     )
                 }
 

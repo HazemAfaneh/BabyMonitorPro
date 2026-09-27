@@ -28,6 +28,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -71,7 +72,7 @@ import com.hazemafaneh.babymonitorpro.ui.components.QrCode
 import com.hazemafaneh.babymonitorpro.ui.components.SectionCard
 import com.hazemafaneh.babymonitorpro.ui.components.SectionLabel
 import com.hazemafaneh.babymonitorpro.ui.components.StatusChip
-import com.hazemafaneh.babymonitorpro.ui.components.StopBroadcastingButton
+import com.hazemafaneh.babymonitorpro.ui.components.BroadcastToggleButton
 import com.hazemafaneh.babymonitorpro.ui.components.StatusTone
 import com.hazemafaneh.babymonitorpro.ui.components.IconPlate
 import com.hazemafaneh.babymonitorpro.ui.components.PlateSize
@@ -82,6 +83,7 @@ import com.hazemafaneh.babymonitorpro.ui.theme.Touch
 import com.hazemafaneh.babymonitorpro.ui.video.JpegFrameView
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.MutableStateFlow
 import org.koin.compose.koinInject
 
@@ -99,7 +101,6 @@ fun CameraScreen(
     night: Boolean,
     onNightChanged: (Boolean) -> Unit,
     onSettings: () -> Unit,
-    onStop: () -> Unit,
 ) {
     val settings = koinInject<AppSettings>()
     // Injected, not constructed: opening Settings must not hand that screen a second,
@@ -131,29 +132,76 @@ fun CameraScreen(
         if (permissions.needsRequest) permissions.request()
     }
 
-    // Keyed on the answer, not on the permissions themselves. Starting while the dialog is
-    // still up starts twice — once with no camera, then again the moment the user taps
-    // Allow — and the second start tears down the server, the pairing address and the QR
-    // code the first one just put on screen.
-    LaunchedEffect(broadcaster, permissions.resolved) {
+    // What this camera would broadcast with, as the settings screen currently has it.
+    val wanted = BroadcastConfig(
+        deviceName = deviceName,
+        // Picture size, frame rate and which lens, all from the settings screen — the
+        // capture config used to be the library default, so three settings a parent could
+        // change had no effect on what was actually sent.
+        port = settings.port,
+        capture = settings.captureConfig(),
+        motionSensitivity = settings.motionSensitivity,
+        soundSensitivity = settings.soundSensitivity,
+    )
+    val scope = rememberCoroutineScope()
+
+    val start: () -> Unit = {
+        scope.launch {
+            broadcaster?.start(
+                // Started with the lens that is actually live, so restarting after a
+                // resolution change does not also undo a lens switch made a minute ago.
+                if (broadcaster.state.value.canSwitchCamera) {
+                    wanted.copy(
+                        capture = wanted.capture.copy(
+                            useFrontCamera = broadcaster.state.value.usingFrontCamera,
+                        ),
+                    )
+                } else {
+                    wanted
+                },
+            )
+        }
+    }
+
+    // Opening this screen no longer puts the nursery on air.
+    //
+    // It used to: arriving here started the server, and the only way to stop was a button
+    // that also threw the parent back to the role picker. So there was no way to look at the
+    // screen — to check the framing, to read the pairing code, to change a setting — without
+    // broadcasting, and no way to go off air without leaving. Both halves of one decision
+    // now sit on one button that leaves the screen where it is.
+    //
+    // What this effect still does is keep a *running* camera honest about the settings. Most
+    // of them can be changed live; capture geometry, the port and the advertised name cannot,
+    // because they are fixed when the camera binds and when mDNS registers. A parent who
+    // changed the picture size while broadcasting used to come back to a camera still
+    // capturing at the old one, with the settings screen cheerfully claiming otherwise.
+    LaunchedEffect(broadcaster, permissions.resolved, wanted) {
         if (!permissions.resolved) return@LaunchedEffect
-        // Only if it is not already up. This effect re-runs every time the screen is
-        // recomposed from scratch — which now includes coming back from Settings — and
-        // start() begins by calling stop(), so an unguarded call here would tear the server
-        // down and drop every viewer just because the parent looked at a setting.
-        if (broadcaster?.state?.value?.running == true) return@LaunchedEffect
-        broadcaster?.start(
-            BroadcastConfig(
-                deviceName = deviceName,
-                // Picture size, frame rate and which lens, all from the settings screen —
-                // the capture config used to be the library default, so three settings a
-                // parent could change had no effect on what was actually sent.
-                port = settings.port,
-                capture = settings.captureConfig(),
-                motionSensitivity = settings.motionSensitivity,
-                soundSensitivity = settings.soundSensitivity,
-            ),
-        )
+        val current = broadcaster?.activeConfig ?: return@LaunchedEffect
+        if (broadcaster.state.value.running != true) return@LaunchedEffect
+
+        if (current.motionSensitivity != wanted.motionSensitivity ||
+            current.soundSensitivity != wanted.soundSensitivity
+        ) {
+            broadcaster.setSensitivity(wanted.motionSensitivity, wanted.soundSensitivity)
+        }
+
+        // The lens is not part of the comparison below. It can be flipped on a running camera
+        // — from this screen and from a viewer's control panel — so the truth about which one
+        // is live is the state, not the config the camera was started with.
+        if (wanted.capture.useFrontCamera != broadcaster.state.value.usingFrontCamera &&
+            broadcaster.state.value.canSwitchCamera
+        ) {
+            broadcaster.switchCamera()
+        }
+
+        val geometryChanged = current.capture.width != wanted.capture.width ||
+            current.capture.height != wanted.capture.height ||
+            current.capture.fps != wanted.capture.fps
+        if (geometryChanged || current.port != wanted.port || current.deviceName != wanted.deviceName) {
+            start()
+        }
     }
 
     // Deliberately no stop-on-dispose. Opening Settings disposes this screen, and tearing
@@ -218,7 +266,11 @@ fun CameraScreen(
                     // is the one destructive control on the screen, and putting distance
                     // between it and the things a parent taps while pairing is the point.
                     Spacer(Modifier.weight(1f))
-                    StopBroadcastingButton(broadcaster, onStop)
+                    BroadcastToggleButton(
+                        running = state.running,
+                        onStart = start,
+                        onStop = { broadcaster?.requestStop() },
+                    )
                 }
             }
         } else {
@@ -241,7 +293,11 @@ fun CameraScreen(
                 // they are deciding whether to trust it.
                 PrivacyLine(state.primaryAddress)
                 Spacer(Modifier.height(Space.sm))
-                StopBroadcastingButton(broadcaster, onStop)
+                BroadcastToggleButton(
+                    running = state.running,
+                    onStart = start,
+                    onStop = { broadcaster?.requestStop() },
+                )
                 Spacer(Modifier.height(Space.xl))
             }
         }
@@ -324,6 +380,19 @@ private fun PreviewBlock(
     // stops checking — and this is precisely the window where there is nothing to see.
     var hasFrame by remember { mutableStateOf(false) }
 
+    // Stopping puts the picture away.
+    //
+    // The frame view keeps the last bitmap it decoded on purpose — a stream that pauses for a
+    // second is not a stream that has ended, and blanking on every hiccup looks like a fault.
+    // Stopping the broadcast is the other case: the camera is closed, nothing is being sent,
+    // and a still of the nursery left on screen is the app showing a picture it is no longer
+    // taking. That is the one lie this app cannot tell, so the frames are cut at the source
+    // here, which resets the view's own state with them.
+    LaunchedEffect(state.running) {
+        if (!state.running) hasFrame = false
+    }
+    val liveFrames = frames?.takeIf { state.running }
+
     // Constraints are unbounded inside a vertical scroll, so the window is the only thing
     // that can say how tall is too tall. Floored so the first, unmeasured pass does not
     // collapse the box to nothing and back.
@@ -351,7 +420,7 @@ private fun PreviewBlock(
             // The same frames the viewers receive, so what the parent sees here is exactly
             // what is going out.
             JpegFrameView(
-                frames = frames,
+                frames = liveFrames,
                 contentDescription = "Self preview",
                 modifier = Modifier.fillMaxSize(),
                 contentScale = ContentScale.Crop,
@@ -364,6 +433,10 @@ private fun PreviewBlock(
                         !available -> "This device cannot broadcast"
                         !resolved -> "The system is asking for camera and microphone access."
                         !cameraGranted -> "Camera access is off"
+                        // The camera is closed until the parent says otherwise, so there is
+                        // nothing to show and nothing wrong. Says which button, because the
+                        // one that starts it is at the bottom of a scrolling screen.
+                        !state.running -> "Press Start broadcasting to open the camera"
                         else -> null
                     }
                     if (prose != null) {
@@ -395,6 +468,11 @@ private fun PreviewBlock(
 
             // Printed at zero too. A pill that disappears makes "nobody has connected"
             // look identical to "the count is broken", and zero is a fact worth stating.
+            //
+            // Along the bottom rather than opposite the status chip. A phone filming a cot in
+            // portrait gives this box a 9:16 picture inside it, and two pills on one row of
+            // that width overlap — "Nobody watching" was sitting on top of "Broadcasting",
+            // hiding the one line on the screen that says the thing is working.
             if (state.running) {
                 OverlayPill(
                     text = when (state.viewerCount) {
@@ -402,7 +480,7 @@ private fun PreviewBlock(
                         1 -> "1 watching"
                         else -> "${state.viewerCount} watching"
                     },
-                    modifier = Modifier.align(Alignment.TopEnd).padding(chipInset),
+                    modifier = Modifier.align(Alignment.BottomStart).padding(chipInset),
                 )
             }
         }
@@ -674,7 +752,8 @@ private fun broadcastStatus(
     // no first frame is neither.
     state.running && !hasFrame -> "Starting" to StatusTone.WAITING
     state.running -> "Broadcasting" to StatusTone.LIVE
-    else -> "Starting" to StatusTone.WAITING
+    // Not a failure and not a wait — the parent has not pressed Start yet.
+    else -> "Not broadcasting" to StatusTone.WAITING
 }
 
 private val HEADER_NAME = 20.sp
@@ -696,5 +775,13 @@ private const val COPIED_VISIBLE_MILLIS = 1600L
 private const val DEFAULT_PREVIEW_ASPECT = 16f / 9f
 private val RAIL_WIDTH = 420.dp
 private val TABLET_QR_SIZE = 150.dp
-private const val PREVIEW_MAX_HEIGHT_FRACTION = 0.48f
-private val PREVIEW_MIN_HEIGHT = 180.dp
+/**
+ * How much of the window the self-preview may take.
+ *
+ * Was 0.48. Half the screen is more picture than this screen's job needs: the preview answers
+ * "is it pointed at the cot and is it working", which a third of a phone screen answers just
+ * as well — and the things underneath it, the pairing code and the address a parent is trying
+ * to type into another device, were below the fold on every phone as a result.
+ */
+private const val PREVIEW_MAX_HEIGHT_FRACTION = 0.32f
+private val PREVIEW_MIN_HEIGHT = 150.dp

@@ -72,6 +72,17 @@ data class BroadcastState(
 interface Broadcaster {
     val state: StateFlow<BroadcastState>
 
+    /**
+     * What this camera is actually running with, or null before the first [start].
+     *
+     * [state] carries what the *screen* needs; this carries what was asked for, which is not
+     * the same question. The camera screen compares it against the settings on disk to notice
+     * that a parent changed the picture size or the frame rate while the camera was already
+     * broadcasting — a change that until now was written to disk, shown on the settings
+     * screen, and then quietly ignored by the camera until the next cold start.
+     */
+    val activeConfig: BroadcastConfig?
+
     /** JPEG frames, also used for the on-device self-preview. */
     val frames: Flow<ByteArray>
 

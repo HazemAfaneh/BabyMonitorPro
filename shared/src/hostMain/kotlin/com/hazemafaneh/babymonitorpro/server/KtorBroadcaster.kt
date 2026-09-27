@@ -62,6 +62,13 @@ class KtorBroadcaster : Broadcaster {
     override val events: Flow<ControlMessage> = eventFlow.asSharedFlow()
 
     private var config: BroadcastConfig? = null
+        set(value) {
+            field = value
+            _activeConfig.value = value
+        }
+
+    private val _activeConfig = MutableStateFlow<BroadcastConfig?>(null)
+    override val activeConfig: BroadcastConfig? get() = _activeConfig.value
     private var camera: CameraController? = null
     private var mic: MicController? = null
     private val advertiser = createAdvertiser()

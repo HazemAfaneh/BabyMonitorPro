@@ -41,10 +41,18 @@ import com.hazemafaneh.babymonitorpro.ui.layout.tvOverscan
 import com.hazemafaneh.babymonitorpro.ui.theme.Space
 import com.hazemafaneh.babymonitorpro.ui.theme.Touch
 
-/** The two things the home screen holds. */
+/** The three things the home screen holds. */
 private enum class HomeTab(val label: String, val icon: ImageVector) {
     MONITOR("Monitor", BmpIcons.House),
     SETTINGS("Settings", BmpIcons.Sliders),
+
+    /**
+     * Last, and narrower than the other two.
+     *
+     * It is the tab nobody opens twice, so it neither leads the strip nor takes an equal
+     * share of a 393pt phone's width from the two that do.
+     */
+    ABOUT("About", BmpIcons.Crib),
 }
 
 /**
@@ -88,10 +96,20 @@ fun HomeScreen(
                     tab = entry,
                     selected = tab == entry,
                     onSelect = { tab = entry },
-                    // The remote lands on the tab strip, not inside the content: it is the
-                    // top of the screen's focus path, and every other target is one press
-                    // down from it.
-                    modifier = if (entry == HomeTab.MONITOR) Modifier.initialFocus() else Modifier,
+                    // An equal share of the row each, capped so they do not stretch into
+                    // three banners on a desktop window. Fixed minimum widths were what broke
+                    // when the third tab arrived: 3 × 132dp plus the gaps does not fit a
+                    // 393pt phone, so the strip overflowed and About set its label one letter
+                    // per line off the right-hand edge.
+                    modifier = Modifier
+                        .weight(1f)
+                        .widthIn(max = TAB_MAX_WIDTH)
+                        // The remote lands on the tab strip, not inside the content: it is
+                        // the top of the screen's focus path, and every other target is one
+                        // press down from it.
+                        .then(
+                            if (entry == HomeTab.MONITOR) Modifier.initialFocus() else Modifier,
+                        ),
                 )
             }
         }
@@ -106,6 +124,8 @@ fun HomeScreen(
                     onBack = null,
                     onStop = onStop,
                 )
+
+                HomeTab.ABOUT -> AboutScreen()
             }
         }
     }
@@ -128,7 +148,6 @@ private fun TabPill(
     val scheme = MaterialTheme.colorScheme
     Surface(
         modifier = modifier
-            .widthIn(min = TAB_MIN_WIDTH)
             .heightIn(min = Touch.min)
             .pressable(
                 onClick = onSelect,
@@ -143,7 +162,7 @@ private fun TabPill(
         ),
     ) {
         Row(
-            Modifier.padding(horizontal = Space.md, vertical = TAB_V_PADDING),
+            Modifier.fillMaxWidth().padding(horizontal = Space.xs, vertical = TAB_V_PADDING),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.Center,
         ) {
@@ -159,12 +178,16 @@ private fun TabPill(
                 style = MaterialTheme.typography.labelLarge.copy(fontSize = TAB_TEXT),
                 fontWeight = FontWeight.Bold,
                 color = if (selected) scheme.onSecondaryContainer else scheme.onSurfaceVariant,
+                // A tab label never wraps. That is the whole of the bug above.
+                maxLines = 1,
+                softWrap = false,
             )
         }
     }
 }
 
-private val TAB_MIN_WIDTH = 132.dp
+/** Wide enough for the longest label and its glyph; past that the pill is just a banner. */
+private val TAB_MAX_WIDTH = 200.dp
 private val TAB_BORDER = 1.5.dp
 private val TAB_V_PADDING = 10.dp
 private val TAB_ICON = 18.dp

@@ -78,7 +78,7 @@ import com.hazemafaneh.babymonitorpro.ui.components.soundLevelPercent
 import com.hazemafaneh.babymonitorpro.ui.components.thresholdForSensitivity
 import com.hazemafaneh.babymonitorpro.ui.components.SoundLevelMarker
 import com.hazemafaneh.babymonitorpro.ui.components.SoundMeter
-import com.hazemafaneh.babymonitorpro.ui.components.StopBroadcastingButton
+import com.hazemafaneh.babymonitorpro.ui.components.BroadcastToggleButton
 import com.hazemafaneh.babymonitorpro.ui.components.MoveFocusWhen
 import com.hazemafaneh.babymonitorpro.ui.components.focusAnchor
 import com.hazemafaneh.babymonitorpro.ui.components.focusRing
@@ -895,7 +895,16 @@ fun SettingsScreen(
         // be a dead control for a server that was never running.
         if (state.running) {
             Spacer(Modifier.height(Space.md))
-            StopBroadcastingButton(broadcaster, onStop)
+            // Stop-only here: this block is already gated on the camera running, and
+            // starting one belongs on the camera screen, where the preview is.
+            BroadcastToggleButton(
+                running = true,
+                onStart = {},
+                onStop = {
+                    broadcaster?.requestStop()
+                    onStop()
+                },
+            )
         }
 
         Spacer(Modifier.height(Space.xl))

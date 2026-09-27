@@ -90,16 +90,20 @@ fun RolePickerScreen(
                 )
                 Spacer(Modifier.width(Space.sm))
                 Text(
-                    // Two lines by design: on a 393pt phone the one-line form sets at a
-                    // size that leaves the mark beside it looking like a bullet point.
-                    text = "BabyMonitor\nPro",
+                    // One line. It was broken across two on purpose — at 27sp the one-line
+                    // form did not fit a 393pt phone beside a 52dp plate — but a wordmark
+                    // wrapped mid-name reads as a layout that ran out of room, which is
+                    // exactly what it was. Three points smaller sets it on one line with
+                    // room to spare, and the mark beside it still leads.
+                    text = "BabyMonitor Pro",
                     style = MaterialTheme.typography.headlineMedium.copy(
-                        fontSize = 27.sp,
-                        lineHeight = 30.sp,
+                        fontSize = TITLE_TEXT,
                         letterSpacing = (-0.02).em,
                     ),
                     fontWeight = FontWeight.Bold,
                     color = MaterialTheme.colorScheme.onSurface,
+                    maxLines = 1,
+                    softWrap = false,
                 )
             }
 
@@ -262,6 +266,9 @@ private fun LastUsedBadge() {
 
 /** Dark enough to read on the joy accent, warm enough not to look like ink on it. */
 private val MARK_CONTENT = Color(0xFF5A4415)
+
+/** Sized to fit "BabyMonitor Pro" on one line beside the mark on the narrowest phone. */
+private val TITLE_TEXT = 24.sp
 
 private val CARD_BORDER = 1.5.dp
 private val CARD_PADDING_VERTICAL = 22.dp

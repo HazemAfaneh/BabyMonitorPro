@@ -1622,6 +1622,80 @@ still signed with the real key.
 `:shared:compileKotlinWasmJs` and `:shared:jvmTest` all pass. Installed on the Tecno as a
 signed release build; the Downloads copy for the television was refreshed.
 
+## Session 17 — 2026-09-27 — an About page, and a camera that waits to be told
+
+### About
+
+A third tab beside Monitor and Settings. It carries the app's name and **the version read from
+the package rather than typed into the screen** — new `core/AppVersion.kt`, with Android
+reading `PackageInfo.versionName`, iOS reading `CFBundleShortVersionString`, and desktop and
+web falling back to a shared constant. A version line that has drifted from the build is worse
+than no version line, because it is the first thing anybody asks for when a bug report arrives.
+
+It holds: what the app is; **that it works over Tailscale** — both devices on one tailnet,
+still device to device, and a note that tailnet cameras are asked for rather than announced, so
+opening one by address once puts it in Recently connected; who made it, **Hazem Afaneh and
+Munes Bani Fawaz**; the privacy claim in full rather than the one-line form the other screens
+carry; and a credit for the Material Symbols cot.
+
+Nothing on it is interactive. No rating prompt, no share sheet, no link out — this is a
+monitor, and a page that sends a parent to a browser at 3am is a page that took them away from
+the cot.
+
+**The tab strip broke when it gained a third stop.** Each pill had a 132dp minimum, and three
+of those plus the gaps do not fit a 393pt phone: About overflowed the right edge and set its
+label one letter per line. The pills now share the row evenly, capped at 200dp so they do not
+become banners on a desktop window, and a tab label never wraps.
+
+### The wordmark on one line
+
+`"BabyMonitor\nPro"` was a deliberate two-line set — at 27sp the one-line form did not fit
+beside the 52dp mark. But a wordmark broken mid-name reads as a layout that ran out of room,
+which is exactly what it was. 24sp sets it on one line with room to spare.
+
+### The camera screen no longer goes live by itself
+
+Opening "Use this device as Camera" used to start broadcasting immediately, and the only way
+to stop was a button that also threw the parent back to the role picker. So there was no way
+to look at the screen — check the framing, read the pairing code, change a setting — without
+being on air, and no way to go off air without leaving.
+
+- **One button, both halves.** `BroadcastToggleButton` replaces `StopBroadcastingButton`:
+  filled "Start broadcasting" when idle, outlined error-toned "Stop broadcasting" when live,
+  and the screen stays where it is either way. That is also what makes "stop, change the
+  resolution, start again" something a parent can do without losing their place.
+- **The idle state says so**: the chip reads "Not broadcasting" rather than a permanent
+  "Starting", and the preview says which button opens the camera.
+- Stopping from the camera's own settings page returns to the camera screen rather than to the
+  role picker.
+
+### The preview obeys the settings, and is smaller
+
+- **Smaller.** It could take 48% of the window; now 32%. The preview answers "is it pointed at
+  the cot and is it working", which a third of a phone screen answers just as well — and the
+  pairing code and address underneath it were below the fold on every phone.
+- **Obeys the settings while running.** Capture geometry is fixed when the camera binds, so a
+  parent who changed the picture size or the frame rate mid-broadcast came back to a camera
+  still capturing at the old one, with the settings screen claiming otherwise. `Broadcaster`
+  now exposes `activeConfig`, and the camera screen compares it against the settings on
+  return: sensitivities are applied live, the lens is switched live, and only geometry, port
+  or name — the three that genuinely cannot change on a bound camera — trigger a rebind. A
+  rebind keeps whichever lens is actually live rather than reverting it.
+- **Stopping puts the picture away.** The frame view holds its last bitmap on purpose — a
+  stream that pauses for a second has not ended, and blanking on every hiccup looks like a
+  fault — but stopping is the other case: the camera is closed, nothing is being sent, and a
+  still of the nursery left on screen is the app showing a picture it is no longer taking.
+  The frames are cut at the call site when the broadcast stops, which resets the view with
+  them, and the placeholder comes back.
+- **The viewer pill moved to the bottom of the picture.** A portrait 9:16 preview is too narrow
+  for two pills on one row: "Nobody watching" was sitting on top of "Broadcasting".
+
+### Verified
+
+`:androidApp:assembleRelease`, `:shared:compileKotlinJvm`, `:shared:compileKotlinWasmJs` and
+`:shared:jvmTest` pass. Checked on the Tecno: About renders with both names and version 1.0,
+the wordmark is on one line, the camera screen opens idle and goes live on Start.
+
 ## Needs a Mac — the complete iOS list
 
 Everything below is iOS-only and **none of it has been compiled**, because iOS targets cannot
@@ -1730,3 +1804,11 @@ detail to the notification; both are already on `CameraAlert`.
   fed from the MJPEG decoder, which is a genuine piece of work rather than a wiring job.
 - **`BmpIcons.Teddy` is gone**, replaced by `BmpIcons.Crib`. Common code, so the iPhone UI
   changes with it; nothing iOS-specific to do, but the mark on every screen is now a cot.
+
+### Also inherited, from session 17
+
+- **The About tab appears on iPhone too**, and `appVersion()` there reads
+  `CFBundleShortVersionString` from the bundle — worth one look that the Xcode project actually
+  sets it, or the page will say 1.0 forever.
+- **The camera screen's start behaviour is common code**, so iOS gets the same toggle: no
+  broadcast until Start, and Stop leaves the parent on the screen.

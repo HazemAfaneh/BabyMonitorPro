@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.width
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
@@ -121,38 +122,63 @@ fun QrCode(
  * reachable to anyone on the WiFi. Stopping is the whole point of the control; it cannot be
  * left to the call site to remember.
  *
- * Outlined and error-toned, never filled: this is the one destructive control in the app, and
- * an outline reads as deliberate where a filled error button reads as the obvious next step.
+ * It is a toggle rather than a one-way door. Broadcasting used to begin the instant the camera
+ * screen opened and end by throwing the parent back to the role picker, so the two halves of
+ * one decision were a side effect and an exit: there was no way to look at this screen without
+ * going live, and no way to go off air without leaving. Now the same button does both and the
+ * screen stays put, which is also what makes "stop, change the resolution, start again" a
+ * thing a parent can do without losing their place.
+ *
+ * Stopping is outlined and error-toned, never filled: it is the one destructive control in the
+ * app, and an outline reads as deliberate where a filled error button reads as the obvious
+ * next step. Starting is filled, because it is exactly that.
  */
 @Composable
-fun StopBroadcastingButton(
-    broadcaster: Broadcaster?,
-    onStopped: () -> Unit,
+fun BroadcastToggleButton(
+    running: Boolean,
+    onStart: () -> Unit,
+    onStop: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val interactionSource = remember { MutableInteractionSource() }
-    OutlinedButton(
-        onClick = {
-            broadcaster?.requestStop()
-            onStopped()
-        },
-        interactionSource = interactionSource,
-        modifier = modifier
-            .fillMaxWidth()
-            .heightIn(min = STOP_BUTTON_HEIGHT)
-            .pressScale(interactionSource, wide = true),
-        shape = RoundedCornerShape(STOP_BUTTON_RADIUS),
-        border = BorderStroke(CARD_BORDER, MaterialTheme.colorScheme.error),
-        colors = ButtonDefaults.outlinedButtonColors(
-            contentColor = MaterialTheme.colorScheme.error,
-        ),
-    ) {
-        Text(
-            text = "Stop broadcasting",
-            style = MaterialTheme.typography.labelLarge.copy(fontSize = 15.sp),
-            fontWeight = FontWeight.Bold,
-        )
+    val shape = RoundedCornerShape(STOP_BUTTON_RADIUS)
+    val buttonModifier = modifier
+        .fillMaxWidth()
+        .heightIn(min = STOP_BUTTON_HEIGHT)
+        .pressScale(interactionSource, wide = true)
+
+    if (running) {
+        OutlinedButton(
+            onClick = onStop,
+            interactionSource = interactionSource,
+            modifier = buttonModifier,
+            shape = shape,
+            border = BorderStroke(CARD_BORDER, MaterialTheme.colorScheme.error),
+            colors = ButtonDefaults.outlinedButtonColors(
+                contentColor = MaterialTheme.colorScheme.error,
+            ),
+        ) {
+            ToggleLabel("Stop broadcasting")
+        }
+    } else {
+        Button(
+            onClick = onStart,
+            interactionSource = interactionSource,
+            modifier = buttonModifier,
+            shape = shape,
+        ) {
+            ToggleLabel("Start broadcasting")
+        }
     }
+}
+
+@Composable
+private fun ToggleLabel(text: String) {
+    Text(
+        text = text,
+        style = MaterialTheme.typography.labelLarge.copy(fontSize = 15.sp),
+        fontWeight = FontWeight.Bold,
+    )
 }
 
 private val STOP_BUTTON_HEIGHT = 56.dp
