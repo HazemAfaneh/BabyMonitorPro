@@ -5,6 +5,8 @@ import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.graphics.vector.PathBuilder
+import androidx.compose.ui.graphics.vector.addPathNodes
+import androidx.compose.ui.graphics.vector.group
 import androidx.compose.ui.graphics.vector.path
 import androidx.compose.ui.unit.dp
 import kotlin.math.PI
@@ -41,37 +43,27 @@ object BmpIcons {
      * were worse than either, because a mark's whole job is to be recognised as the same thing
      * twice.
      *
-     * Drawn here in line rather than reusing the launcher's solid Material path. That path is
-     * a silhouette built to be read at 48dp and up; dropped into a 24dp plate it fills in and
-     * reads as a dark blob with a notch in it. Same cot, drawn the way every other icon in
-     * this set is drawn — which is the other half of looking like one app.
+     * Byte for byte the launcher's own path, so the mark on a home screen and the mark inside
+     * the app are the same drawing rather than two drawings of the same idea.
+     *
+     * Material Symbols are published on a 960x960 grid whose y runs from -960 to 0, so a group
+     * places the art rather than the coordinates being rewritten — swapping in another symbol
+     * is then one string. It is a filled silhouette where the rest of this set is line work,
+     * which is the trade: the mark matches the icon exactly, and it reads heavier than the
+     * teddy did beside it.
      */
     val Crib: ImageVector by lazy {
-        bmpIcon("Crib") {
-            strokePath {
-                // The two rails and the posts that hold them.
-                moveTo(3f, 8f)
-                lineTo(21f, 8f)
-                moveTo(3f, 17f)
-                lineTo(21f, 17f)
-                moveTo(3f, 8f)
-                lineTo(3f, 17f)
-                moveTo(21f, 8f)
-                lineTo(21f, 17f)
-                // Three bars. Four was a fence and two was a gate; three is a cot.
-                moveTo(7.5f, 8f)
-                lineTo(7.5f, 17f)
-                moveTo(12f, 8f)
-                lineTo(12f, 17f)
-                moveTo(16.5f, 8f)
-                lineTo(16.5f, 17f)
-                // Legs, short enough that the cot stands rather than hovers.
-                moveTo(5f, 17f)
-                lineTo(5f, 19.5f)
-                moveTo(19f, 17f)
-                lineTo(19f, 19.5f)
+        ImageVector.Builder(
+            name = "Crib",
+            defaultWidth = ICON_SIZE.dp,
+            defaultHeight = ICON_SIZE.dp,
+            viewportWidth = SYMBOL_GRID,
+            viewportHeight = SYMBOL_GRID,
+        ).apply {
+            group(translationY = SYMBOL_GRID) {
+                addPath(pathData = addPathNodes(COT_PATH), fill = SolidColor(Color.Black))
             }
-        }
+        }.build()
     }
 
     /**
@@ -436,6 +428,17 @@ private fun ImageVector.Builder.solidPath(block: PathBuilder.() -> Unit) {
 }
 
 private const val ICON_SIZE = 24f
+
+/** Material Symbols' canvas. See [BmpIcons.Crib]. */
+private const val SYMBOL_GRID = 960f
+
+/** `crib` from Material Symbols (Apache 2.0) — the launcher icon's path, unchanged. */
+private const val COT_PATH =
+    "M480-80q-69 0-132.5-23T230-168q-14-11-15-28.5t11-29.5q12-12 28.5-12t30.5 11q8 7 17 13t18 " +
+        "11v-117h-80q-33 0-56.5-23.5T160-400v-240q0-66 47-113t113-47h120q17 0 28.5 11.5T480-760" +
+        "v160h240q33 0 56.5 23.5T800-520v120q0 33-23.5 56.5T720-320h-80v117q10-6 19-12t18-13q13" +
+        "-11 30-10t28 12q12 12 11 28.5T732-170q-54 43-118.5 66.5T480-80Zm0-80q20 0 40-2.5t40-7." +
+        "5v-150H400v150q20 5 40 7.5t40 2.5Z"
 
 
 /** 1.8dp at 24dp. Thin enough to read as a line drawing, thick enough to survive at 20dp. */

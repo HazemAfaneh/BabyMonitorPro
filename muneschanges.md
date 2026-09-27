@@ -1523,11 +1523,14 @@ The launcher icon, the notifications and the TV banner were a cot; everything in
 was a teddy. Two marks for one app, which is the one thing a mark cannot afford. `BmpIcons`
 now has `Crib` and no `Teddy`, and the nine call sites moved with it.
 
-Drawn in line rather than by reusing the launcher's solid Material path: that path is a
-silhouette built for 48dp and up, and dropped into a 24dp plate it fills in and reads as a
-dark blob with a notch in it. (Tried it first, looked at it on the Tecno, redrew it.) Two
-rails, two posts, three bars and two short legs, at the same 1.8dp stroke as every other icon
-in the set.
+It is the launcher's own path, byte for byte, placed by a group because Material Symbols use a
+960x960 grid whose y runs from -960 to 0. So the mark on the home screen and the mark inside
+the app are the same drawing rather than two drawings of the same idea.
+
+I tried a line-art version first — the rest of this icon set is 1.8dp strokes, and a filled
+silhouette at 24dp reads heavier than everything beside it — but "the same cot as the icon"
+was the point of the exercise, and a redrawn cot is not the same cot. Munes' call, and the
+right one.
 
 ### Find your camera — two things that looked broken
 
