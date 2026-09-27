@@ -97,6 +97,8 @@ import com.hazemafaneh.babymonitorpro.store.ListenOnAlert
 import org.koin.compose.koinInject
 import com.hazemafaneh.babymonitorpro.protocol.ControlMessage
 import com.hazemafaneh.babymonitorpro.ui.KeepScreenAwake
+import com.hazemafaneh.babymonitorpro.ui.PopupPlayer
+import com.hazemafaneh.babymonitorpro.ui.isInPopupPlayer
 import com.hazemafaneh.babymonitorpro.ui.components.LevelMarker
 import com.hazemafaneh.babymonitorpro.ui.components.soundLevelPercent
 import com.hazemafaneh.babymonitorpro.ui.components.motionLevelPercent
@@ -244,6 +246,29 @@ fun LiveViewScreen(
     }
 
     KeepScreenAwake(enabled = settings.keepScreenAwake)
+
+    // The popup window, on the platforms that have one.
+    //
+    // Armed for exactly as long as this screen is up: pressing home from the nursery picture
+    // keeps the picture, pressing home from anywhere else in the app does not start a window
+    // following the parent around. The shape is pushed across as soon as a frame has been
+    // measured, so the window is the shape of the cot rather than a letterbox.
+    val inPopup = isInPopupPlayer()
+    DisposableEffect(Unit) {
+        PopupPlayer.setAutoEnter(true)
+        onDispose { PopupPlayer.setAutoEnter(false) }
+    }
+    LaunchedEffect(frameAspect) {
+        if (frameAspect > 0f) PopupPlayer.setAspectRatio(frameAspect)
+    }
+    val onPopup: (() -> Unit)? = if (PopupPlayer.isSupported) {
+        {
+            PopupPlayer.enter()
+            lastInteraction = nowMillis()
+        }
+    } else {
+        null
+    }
 
     // The watching session on the Lock Screen and in the Dynamic Island, for exactly as long
     // as this screen is up. Keyed on the endpoint so switching cameras ends one session and
@@ -473,9 +498,13 @@ fun LiveViewScreen(
     // standing target the remote can reach — and TV boxes do not reliably report an EXPANDED
     // window: plenty hand back 1920x1080 at a density that measures 640dp, which put a 55"
     // screen on the phone layout with auto-hiding chrome and no rail at all.
-    val railPresent = (isTelevision || window == WindowClass.EXPANDED) && !videoIsSeparateLayer
-    // Always. See the effect above.
-    val chromeAlwaysVisible = true
+    // Nothing but the picture in the popup window. At a couple of hundred dp the rail is
+    // wider than the window and the bar covers the cot, and neither can be read anyway.
+    val railPresent = (isTelevision || window == WindowClass.EXPANDED) &&
+        !videoIsSeparateLayer &&
+        !inPopup
+    // Always, except in the popup. See the effect above.
+    val chromeAlwaysVisible = !inPopup
 
     // A landscape camera watched on an upright phone aspect-fits into roughly a third of the
     // screen, with the rest black. Nothing is wrong and nothing is cropped — the picture is
@@ -486,6 +515,8 @@ fun LiveViewScreen(
     val suggestRotation = !rotationHintSeen &&
         // Nobody turns a television sideways.
         !isTelevision &&
+        // And nobody reads a hint in a 200dp window.
+        !inPopup &&
         window.isCompact &&
         portraitWindow &&
         !videoIsSeparateLayer &&
@@ -524,7 +555,10 @@ fun LiveViewScreen(
             // nobody can see, because that phone is face-down in a dark room.
             battery = battery,
             failure = failure,
-            alert = alert,
+            // The banner is two lines of text over a window the size of a business card.
+            // The alert still fires, still sounds and still lands in the shade, where there
+            // is room to read it.
+            alert = if (inPopup) null else alert,
             audioOn = audioOn,
             audioAvailable = audioAvailable,
             audioSupported = audioPlayer != null,
@@ -577,6 +611,7 @@ fun LiveViewScreen(
                 spin = (spin + QUARTER_TURN) % FULL_TURN
                 lastInteraction = nowMillis()
             },
+            onPopup = onPopup,
             onBack = onBack,
         )
 
@@ -631,13 +666,14 @@ fun LiveViewScreen(
                     listeningBecauseOfAlert = false
                     lastInteraction = nowMillis()
                 },
+                onPopup = onPopup,
                 onBack = onBack,
             )
         }
     }
 
         // Over the picture, not under it.
-        if (showCameraControls && remoteStatus != null) {
+        if (showCameraControls && remoteStatus != null && !inPopup) {
             RemoteCameraControls(
                 status = remoteStatus,
                 // Only while this device is actually listening: the meter reads the audio
@@ -694,6 +730,7 @@ private fun LivePane(
     onToggleAudio: () -> Unit,
     onCameraControls: (() -> Unit)?,
     onRotate: () -> Unit,
+    onPopup: (() -> Unit)?,
     onBack: () -> Unit,
 ) {
     Box(
@@ -893,6 +930,7 @@ private fun LivePane(
                     audioSupported = audioSupported,
                     fullWidth = videoIsSeparateLayer,
                     onToggleAudio = onToggleAudio,
+                    onPopup = onPopup,
                     onBack = onBack,
                 )
             }
@@ -1058,6 +1096,7 @@ private fun BottomBar(
     audioSupported: Boolean,
     fullWidth: Boolean,
     onToggleAudio: () -> Unit,
+    onPopup: (() -> Unit)?,
     onBack: () -> Unit,
 ) {
     // Two rows on a phone, one on anything wider.
@@ -1103,6 +1142,7 @@ private fun BottomBar(
                         onToggleAudio = onToggleAudio,
                         onRotate = onRotate,
                         onCameraControls = onCameraControls,
+                        onPopup = onPopup,
                         onBack = onBack,
                     )
                 }
@@ -1121,6 +1161,7 @@ private fun BottomBar(
                     onToggleAudio = onToggleAudio,
                     onRotate = onRotate,
                     onCameraControls = onCameraControls,
+                    onPopup = onPopup,
                     onBack = onBack,
                 )
             }
@@ -1138,7 +1179,7 @@ private fun BarIdentity(
 ) {
     Row(modifier, verticalAlignment = Alignment.CenterVertically) {
         IconPlate(
-            icon = BmpIcons.Teddy,
+            icon = BmpIcons.Crib,
             fill = BmpTheme.tints.lemon.fill,
             contentColor = BmpTheme.tints.lemon.glyph,
             size = PlateSize.row,
@@ -1182,6 +1223,7 @@ private fun BarControls(
     onToggleAudio: () -> Unit,
     onRotate: () -> Unit,
     onCameraControls: (() -> Unit)?,
+    onPopup: (() -> Unit)?,
     onBack: () -> Unit,
 ) {
     if (audioSupported) {
@@ -1221,19 +1263,38 @@ private fun BarControls(
         }
     }
 
+    if (onPopup != null) {
+        val popupInteraction = remember { MutableInteractionSource() }
+        // Beside the camera glyph rather than at the end: this is a thing done *to the
+        // picture*, like turning it, and Close is the end of the row everywhere in the app.
+        IconButton(
+            onClick = onPopup,
+            interactionSource = popupInteraction,
+            modifier = Modifier.size(BAR_ICON_BUTTON).focusRing(popupInteraction, CircleShape),
+        ) {
+            Icon(
+                imageVector = BmpIcons.Popup,
+                contentDescription = "Watch in a small window",
+                tint = MaterialTheme.colorScheme.secondary,
+                modifier = Modifier.size(SOUND_ICON),
+            )
+        }
+    }
+
     val closeInteraction = remember { MutableInteractionSource() }
-    TextButton(
+    // A cross, like the rail's. The word was the widest thing in a row of glyphs — three
+    // button-widths spent on the one control every parent already knows the shape of — and it
+    // made the bar read as two different kinds of thing side by side.
+    IconButton(
         onClick = onBack,
         interactionSource = closeInteraction,
-        modifier = Modifier.focusRing(closeInteraction, MaterialTheme.shapes.medium),
-        colors = ButtonDefaults.textButtonColors(
-            contentColor = MaterialTheme.colorScheme.secondary,
-        ),
+        modifier = Modifier.size(BAR_ICON_BUTTON).focusRing(closeInteraction, CircleShape),
     ) {
-        Text(
-            text = "Close",
-            style = MaterialTheme.typography.labelLarge.copy(fontSize = SOUND_TEXT),
-            fontWeight = FontWeight.Bold,
+        Icon(
+            imageVector = BmpIcons.Close,
+            contentDescription = "Close the live view",
+            tint = MaterialTheme.colorScheme.secondary,
+            modifier = Modifier.size(SOUND_ICON),
         )
     }
 }
@@ -1573,6 +1634,7 @@ private fun SideRail(
     width: Dp,
     onNightChanged: (Boolean) -> Unit,
     onToggleAudio: () -> Unit,
+    onPopup: (() -> Unit)?,
     onBack: () -> Unit,
 ) {
     Column(
@@ -1590,7 +1652,7 @@ private fun SideRail(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             IconPlate(
-                icon = BmpIcons.Teddy,
+                icon = BmpIcons.Crib,
                 fill = BmpTheme.tints.lemon.fill,
                 contentColor = BmpTheme.tints.lemon.glyph,
                 size = PlateSize.medium,
@@ -1736,7 +1798,7 @@ private fun SideRail(
                                 // parent asks this list is which kind woke them.
                                 imageVector = when (entry.kind) {
                                     AlertKind.SOUND -> BmpIcons.Rattle
-                                    AlertKind.MOTION -> BmpIcons.Teddy
+                                    AlertKind.MOTION -> BmpIcons.Crib
                                 },
                                 contentDescription = null,
                                 tint = lemon.glyph,
@@ -1868,6 +1930,13 @@ private fun SideRail(
                     icon = BmpIcons.Camera,
                     description = "Camera settings",
                     onClick = onCameraControls,
+                )
+            }
+            if (onPopup != null) {
+                RailIconButton(
+                    icon = BmpIcons.Popup,
+                    description = "Watch in a small window",
+                    onClick = onPopup,
                 )
             }
             if (audioSupported) {

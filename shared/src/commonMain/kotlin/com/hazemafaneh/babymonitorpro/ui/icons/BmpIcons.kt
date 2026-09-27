@@ -34,22 +34,42 @@ object BmpIcons {
      *
      * App mark, camera identity, the discovered-camera rows, the live-view bar — the four
      * places a parent needs to know *which device* they are looking at.
+     *
+     * The same cot as the launcher icon, the notifications and the television banner. It used
+     * to be a teddy drawn here by hand, which meant the app had two marks: a cot on the home
+     * screen and in the shade, a bear everywhere inside. Neither was wrong and together they
+     * were worse than either, because a mark's whole job is to be recognised as the same thing
+     * twice.
+     *
+     * Drawn here in line rather than reusing the launcher's solid Material path. That path is
+     * a silhouette built to be read at 48dp and up; dropped into a 24dp plate it fills in and
+     * reads as a dark blob with a notch in it. Same cot, drawn the way every other icon in
+     * this set is drawn — which is the other half of looking like one app.
      */
-    val Teddy: ImageVector by lazy {
-        bmpIcon("Teddy") {
+    val Crib: ImageVector by lazy {
+        bmpIcon("Crib") {
             strokePath {
-                circle(12f, 14f, 6f)
-                circle(6.5f, 7.5f, 2.6f)
-                circle(17.5f, 7.5f, 2.6f)
-                // The smile. A shallow arc rather than a curve with control points,
-                // because at 20dp the difference is invisible and the arc cannot go wrong.
-                moveTo(10.6f, 16.4f)
-                arcToRelative(2f, 2f, 0f, isMoreThanHalf = false, isPositiveArc = false, 2.8f, 0f)
-            }
-            // Solid, and small enough that stroking them would fill them in anyway.
-            solidPath {
-                circle(10f, 13f, 0.9f)
-                circle(14f, 13f, 0.9f)
+                // The two rails and the posts that hold them.
+                moveTo(3f, 8f)
+                lineTo(21f, 8f)
+                moveTo(3f, 17f)
+                lineTo(21f, 17f)
+                moveTo(3f, 8f)
+                lineTo(3f, 17f)
+                moveTo(21f, 8f)
+                lineTo(21f, 17f)
+                // Three bars. Four was a fence and two was a gate; three is a cot.
+                moveTo(7.5f, 8f)
+                lineTo(7.5f, 17f)
+                moveTo(12f, 8f)
+                lineTo(12f, 17f)
+                moveTo(16.5f, 8f)
+                lineTo(16.5f, 17f)
+                // Legs, short enough that the cot stands rather than hovers.
+                moveTo(5f, 17f)
+                lineTo(5f, 19.5f)
+                moveTo(19f, 17f)
+                lineTo(19f, 19.5f)
             }
         }
     }
@@ -179,6 +199,35 @@ object BmpIcons {
                 lineTo(17f, 17f)
                 moveTo(17f, 7f)
                 lineTo(7f, 17f)
+            }
+        }
+    }
+
+    /**
+     * Shrink the picture into the popup window.
+     *
+     * The platform glyph: the screen as an outline, with the small window it becomes drawn
+     * solid in the corner it lands in. Solid rather than stroked because two nested outlines
+     * at 20dp read as one thick rectangle.
+     */
+    val Popup: ImageVector by lazy {
+        bmpIcon("Popup") {
+            strokePath {
+                moveTo(4f, 6.5f)
+                lineTo(20f, 6.5f)
+                moveTo(4f, 6.5f)
+                lineTo(4f, 17.5f)
+                moveTo(4f, 17.5f)
+                lineTo(11f, 17.5f)
+                moveTo(20f, 6.5f)
+                lineTo(20f, 11f)
+            }
+            solidPath {
+                moveTo(12.5f, 12.5f)
+                lineTo(21f, 12.5f)
+                lineTo(21f, 18.5f)
+                lineTo(12.5f, 18.5f)
+                close()
             }
         }
     }
@@ -387,6 +436,7 @@ private fun ImageVector.Builder.solidPath(block: PathBuilder.() -> Unit) {
 }
 
 private const val ICON_SIZE = 24f
+
 
 /** 1.8dp at 24dp. Thin enough to read as a line drawing, thick enough to survive at 20dp. */
 private const val STROKE_WIDTH = 1.8f

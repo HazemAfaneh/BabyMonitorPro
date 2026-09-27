@@ -83,7 +83,7 @@ fun RolePickerScreen(
                 // The app mark. The joy accent is spent here and on the sound meter, and
                 // nowhere else — it is the one colour in the app allowed to mean nothing.
                 IconPlate(
-                    icon = BmpIcons.Teddy,
+                    icon = BmpIcons.Crib,
                     fill = tints.joy,
                     contentColor = MARK_CONTENT,
                     size = PlateSize.large,

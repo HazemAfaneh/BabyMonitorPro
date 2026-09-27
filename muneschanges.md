@@ -1481,6 +1481,144 @@ Two things worth remembering from doing it:
 
 ---
 
+## Session 16 — 2026-09-27 — a popup player, one mark, and a camera that was there all along
+
+### The popup player
+
+Watching the cot and doing anything else on the phone were exclusive: leaving the live view
+kept the stream, the service and the alerts alive, but the picture — the entire point — was
+gone. The app now shrinks into a floating window instead.
+
+This is Android picture-in-picture, deliberately rather than an overlay of our own. A
+`SYSTEM_ALERT_WINDOW` overlay would need a permission granted from a full-screen system
+warning, would have to be drawn and dragged by hand, and would keep a second rendering path
+alive that nothing else uses. Picture-in-picture is the same activity, the same composition
+and the same stream, drawn small by the system — so the connection, the audio pump and the
+detectors are untouched by it.
+
+- **New seam** `shared/.../ui/PopupPlayer.kt`, with `isSupported`, `enter()`,
+  `setAspectRatio()`, `setAutoEnter()` and a composable `isInPopupPlayer()`.
+- **Android** (`PopupPlayer.android.kt`) holds the activity weakly, keys `isSupported` off
+  `FEATURE_PICTURE_IN_PICTURE` — absent on plenty of budget hardware and many TV boxes, and
+  the button is hidden where it would do nothing — and clamps the camera's real aspect ratio
+  into the 1:2.39..2.39:1 window the platform accepts.
+- **Automatic on leaving.** Armed only while the live view is open. From Android 12 this is
+  `setAutoEnterEnabled`, which also covers the gesture-navigation swipe; below that it is
+  `onUserLeaveHint`, which is the only hook those versions give.
+- **Manual**, from a new glyph in the phone's bottom bar and in the television rail.
+- **In the window, everything that is not the picture goes.** Rail, bar, alert banner and the
+  camera panel are all suppressed — at 200dp they cover the cot and cannot be read anyway.
+  Alerts still fire, still sound and still land in the shade, where there is room for them.
+- `MainActivity` gained `attach`/`detach`, `onUserLeaveHint` and
+  `onPictureInPictureModeChanged`; the manifest gained `supportsPictureInPicture`,
+  `resizeableActivity` and `smallestScreenSize` in `configChanges`.
+- **iOS, desktop and web return `isSupported = false`** and every call is a no-op. iOS PiP is
+  `AVPictureInPictureController` and will only carry an `AVPlayerLayer` or an
+  `AVSampleBufferDisplayLayer`; feeding MJPEG frames into a sample-buffer layer is real work
+  and needs a Mac. Noted in the iOS list below.
+
+### One mark, not two
+
+The launcher icon, the notifications and the TV banner were a cot; everything inside the app
+was a teddy. Two marks for one app, which is the one thing a mark cannot afford. `BmpIcons`
+now has `Crib` and no `Teddy`, and the nine call sites moved with it.
+
+Drawn in line rather than by reusing the launcher's solid Material path: that path is a
+silhouette built for 48dp and up, and dropped into a 24dp plate it fills in and reads as a
+dark blob with a notch in it. (Tried it first, looked at it on the Tecno, redrew it.) Two
+rails, two posts, three bars and two short legs, at the same 1.8dp stroke as every other icon
+in the set.
+
+### Find your camera — two things that looked broken
+
+Both visible in a screenshot from the Tecno:
+
+- **The card heading ran into its own meta.** `ON THIS NETWORK` and `mDNS · local only` sat on
+  one row under `SpaceBetween` with no minimum gap, so on a 393dp phone they touched and read
+  as one broken word. The meta now sits under the label.
+- **"Search again" wrapped onto two lines**, turning a pill into a lozenge twice the height of
+  everything beside it. One line now, never wrapped.
+- **Pressing it looked like it lost the cameras.** The round tears down the mDNS browser and
+  builds a new one, so results went to empty and the card fell back to "Still looking around"
+  before the same cameras reappeared a second later. There is now a 2.5s searching window: the
+  button says "Searching…", the card says so, and the previous results stay on screen for the
+  length of it — but only for that length, so a camera that has genuinely gone off the air
+  still disappears.
+- Only the first card claims initial focus now. Two controls both requesting it is a race, and
+  on a television that race decides where the remote starts.
+
+### The Huawei that was online and invisible
+
+Connecting to it from **Recently connected** worked; the **Over Tailscale** card found
+nothing. The probe built its candidates out of dotted quads only, and a tailnet pairing is
+normally recorded under a MagicDNS *name*. So the name contributed no block, was never turned
+into a candidate, and the one host in the whole tailnet known to answer was the one host the
+probe never asked.
+
+`Tailnet.candidates` now asks every recent host that is **not** a private LAN address
+directly, and first, before any swept block. Written as "not a LAN address" rather than as a
+list of the forms Tailscale happens to use: nothing is hardcoded, no address is assumed, and
+a host handed out by some other VPN works the same way. The input is whatever this household
+has actually connected to. Five tests in `TailnetTest` cover it, with fixture addresses that
+are fixtures.
+
+### Waiting for a search that had already found it
+
+Once the MagicDNS name was in the candidate list the Huawei still did not appear — and then it
+did, two minutes later. Two separate causes, both measured on the Tecno:
+
+- **The probe returned only when every candidate had finished.** ~900 hosts × 3 ports ÷ 24
+  parallel × 1.2s is about two minutes, and the camera being looked for answers in the first
+  fifty milliseconds of it, because it is the first address asked. `CameraProbe.probe` now
+  takes an `onFound` callback and reports each camera the moment it answers; the card adds rows
+  as they arrive and leads with the count rather than with "scanning…". Parallelism went 24 →
+  48, which now only decides how long the card keeps saying it is still looking.
+- **The deadline was too short for a named host.** 1.2s is generous for a swept IP — it answers
+  at once or it is not there — but a MagicDNS name has to be resolved through the VPN's own
+  resolver and the tunnel to that peer brought up before a byte moves, which routinely takes
+  longer than a second on an idle link. So the probe was hanging up on the one host most likely
+  to be the camera. Known hosts are now asked first, on their own, with a 5s deadline
+  (`KNOWN_HOST_TIMEOUT_MILLIS`); the swept blocks keep the short one. There are only a handful
+  of known hosts, so it costs nothing.
+
+Verified on the device: the camera appears within about ten seconds of opening the screen,
+while the sweep behind it is still running. Before this it took a little over two minutes.
+
+### The local search, asked as well as listened to
+
+Same complaint, different route: the WiFi card showed nothing until mDNS answered, and mDNS is
+the part that fails. Routers drop multicast between wireless clients, Android throttles it in
+the background, guest networks block it, and a camera that announced itself before this device
+joined may not announce again for a while.
+
+New `discovery/Lan.kt`, mirroring `Tailnet`: known LAN hosts from recents first, then the /24
+around each of this device's own private addresses, loopback and link-local skipped, capped at
+520. It runs the same streaming probe, and its results are merged with the mDNS announcements
+and deduplicated by host — announcements first, because an announcement carries the name the
+camera chose for itself. `Lan.isLanAddress` is also what the tailnet probe uses to decide which
+recents entries are already covered here, so neither search asks about the other's hosts.
+
+Three tests in `LanTest`.
+
+### Local release signing, kept in the build file
+
+`androidApp/build.gradle.kts` keeps the `signingConfigs` block now rather than being reverted
+after each build. It reads four optional properties from the gitignored `local.properties` and
+is a no-op when they are absent — unsigned release, exactly as before, on every machine that
+has not set them up. **This is a working change, not committed**, and the release that ships is
+still signed with the real key.
+
+### Small
+
+- The live view's bottom bar closes with an **X**, like the rail does, instead of the word
+  "Close" — it was three button-widths of the only control whose shape everybody knows.
+
+### Verified
+
+`:androidApp:assembleDebug`, `:androidApp:assembleRelease`, `:shared:compileKotlinJvm`,
+`:shared:compileKotlinWasmJs` and `:shared:jvmTest` all pass. Installed on the Tecno as a
+signed release build; the Downloads copy for the television was refreshed.
+
 ## Needs a Mac — the complete iOS list
 
 Everything below is iOS-only and **none of it has been compiled**, because iOS targets cannot
@@ -1580,3 +1718,12 @@ The Live Activity's viewing state now receives `alert.oneLine` — "Sound in the
 Faint — a murmur or a rustle" — where it used to receive a shorter label. The Dynamic Island
 is narrow. If it truncates badly, the fix is to pass `alert.headline` there and leave the
 detail to the notification; both are already on `CameraAlert`.
+
+### Also inherited, from session 16
+
+- **The popup player does nothing on iPhone.** `PopupPlayer.ios.kt` returns
+  `isSupported = false`, so the button is absent and the live view never strips itself back.
+  Making it real means `AVPictureInPictureController` with an `AVSampleBufferDisplayLayer`
+  fed from the MJPEG decoder, which is a genuine piece of work rather than a wiring job.
+- **`BmpIcons.Teddy` is gone**, replaced by `BmpIcons.Crib`. Common code, so the iPhone UI
+  changes with it; nothing iOS-specific to do, but the mark on every screen is now a cot.

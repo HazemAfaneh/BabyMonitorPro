@@ -268,7 +268,7 @@ private fun CameraHeader(
         // The teddy is this camera's identity — the same mark the discovered row and
         // the live-view bar carry, so a parent recognises the device before reading it.
         IconPlate(
-            icon = BmpIcons.Teddy,
+            icon = BmpIcons.Crib,
             fill = BmpTheme.tints.lemon.fill,
             contentColor = BmpTheme.tints.lemon.glyph,
             size = PlateSize.small,

@@ -10,7 +10,9 @@ import io.ktor.http.isSuccess
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withTimeoutOrNull
 
@@ -30,6 +32,9 @@ class CameraProbe {
 
     private val client = cameraHttpClient { expectSuccess = false }
 
+    /** See [KNOWN_HOST_TIMEOUT_MILLIS]. */
+    val knownHostTimeoutMillis: Long get() = KNOWN_HOST_TIMEOUT_MILLIS
+
     /**
      * [ports] rather than one port, because the two ends of a pair are not always the same
      * build. The default moved off 8080, so a camera that has not been updated is listening
@@ -40,21 +45,40 @@ class CameraProbe {
         hosts: List<String>,
         ports: List<Int> = listOf(Bmp.DEFAULT_PORT, Bmp.LEGACY_PORT),
         timeoutMillis: Long = DEFAULT_TIMEOUT_MILLIS,
+        /**
+         * Called the moment a camera answers, before the rest of the sweep finishes.
+         *
+         * This is the difference between a feature and a spinner. The list handed in is
+         * hundreds of addresses long and almost all of them are silent, so waiting for the
+         * last of them costs the better part of two minutes — while the camera the parent is
+         * actually looking for is usually the *first* address asked, because it came out of
+         * the recents list. Returning only at the end meant a working camera sat undiscovered
+         * behind a hundred seconds of timeouts on addresses nobody lives at.
+         *
+         * Invoked in the caller's context, once per host.
+         */
+        onFound: ((CameraEndpoint) -> Unit)? = null,
     ): List<CameraEndpoint> = coroutineScope {
         val gate = Semaphore(MAX_PARALLEL)
         val distinctPorts = ports.distinct()
+        // One row per host: a camera answering on two ports is still one camera, and the
+        // first port asked is the one this device prefers. Tracked as the answers arrive
+        // rather than filtered at the end, so the callback cannot report a host twice.
+        val seen = mutableSetOf<String>()
+        val lock = Mutex()
         hosts
             .flatMap { host -> distinctPorts.map { port -> host to port } }
             .map { (host, port) ->
                 async {
-                    gate.withPermit { ask(host, port, timeoutMillis) }
+                    val found = gate.withPermit { ask(host, port, timeoutMillis) } ?: return@async null
+                    val first = lock.withLock { seen.add(found.host) }
+                    if (!first) return@async null
+                    onFound?.invoke(found)
+                    found
                 }
             }
             .awaitAll()
             .filterNotNull()
-            // One row per host: a camera answering on two ports is still one camera, and the
-            // first port asked is the one this device prefers.
-            .distinctBy { it.host }
     }
 
     private suspend fun ask(host: String, port: Int, timeoutMillis: Long): CameraEndpoint? =
@@ -88,7 +112,25 @@ class CameraProbe {
          */
         const val DEFAULT_TIMEOUT_MILLIS = 1200L
 
-        /** Enough to finish 500 addresses in a few seconds without opening 500 sockets. */
-        const val MAX_PARALLEL = 24
+        /**
+         * For the few hosts that have answered before.
+         *
+         * A swept address either answers at once or is not there, so 1.2s is generous. A named
+         * one is a different problem: a MagicDNS name has to be resolved through the VPN's own
+         * resolver and the tunnel to that peer may have to be built before the first byte
+         * moves, and that routinely takes longer than a second on a link that has been idle.
+         * The short deadline was therefore hanging up on the one host most likely to be the
+         * camera. There are only a handful of these, so the extra wait costs nothing.
+         */
+        const val KNOWN_HOST_TIMEOUT_MILLIS = 5_000L
+
+        /**
+         * Enough to get through the swept blocks without opening a socket per address.
+         *
+         * Raised from 24 once the results started streaming: the number no longer decides how
+         * long a parent waits to see their camera — that is the first answer now, not the last
+         * — but it does decide how long the card goes on saying it is still looking.
+         */
+        const val MAX_PARALLEL = 48
     }
 }

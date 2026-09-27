@@ -43,6 +43,18 @@ object Tailnet {
      * sweep of 100.64.0.0/10 is four million and is never attempted — that is a port scan,
      * not a feature.
      */
+    /**
+     * The hosts out of [knownHosts] this probe should ask about — everything the ordinary WiFi
+     * search does not already cover.
+     *
+     * Exposed separately from [candidates] because these deserve different treatment: there
+     * are a handful of them, they are evidence rather than guesses, and a MagicDNS name has to
+     * be resolved and a tunnel brought up before it can answer. They get a longer deadline;
+     * the swept blocks below them do not.
+     */
+    fun known(knownHosts: Collection<String>): List<String> =
+        knownHosts.filterNot(Lan::isLanAddress).distinct()
+
     fun candidates(
         ownAddresses: Collection<String>,
         /**
@@ -59,6 +71,18 @@ object Tailnet {
         val own = ownAddresses.filter(::isTailnetAddress)
         if (own.isEmpty()) return emptyList()
 
+        // Hosts that have actually held a camera, asked first and asked as themselves.
+        //
+        // This is what made a working camera invisible. A tailnet pairing is normally recorded
+        // under a MagicDNS *name*, and every line below this one reasons about dotted quads: a
+        // name contributed no block, was never turned into a candidate, and so the one host in
+        // the whole tailnet known to answer was the one host the probe never asked — while
+        // tapping that same entry under Recently connected opened the camera immediately.
+        //
+        // No address is assumed and none is built in: this is whatever this household has
+        // connected to before, minus what the WiFi search already covers.
+        val named = knownHosts.filterNot(Lan::isLanAddress)
+
         val blocks = LinkedHashSet<String>()
         // Blocks where a camera has actually been seen come first: they are evidence rather
         // than a guess, and the probe is capped, so order decides what gets asked.
@@ -66,8 +90,10 @@ object Tailnet {
         own.forEach { blocks += it.substringBeforeLast('.') }
         blocks += FIRST_BLOCK
 
-        return blocks
+        val swept = blocks
             .flatMap { prefix -> (1..254).map { host -> "$prefix.$host" } }
+
+        return (named + swept)
             .filterNot { it in ownAddresses }
             .distinct()
             .take(MAX_CANDIDATES)

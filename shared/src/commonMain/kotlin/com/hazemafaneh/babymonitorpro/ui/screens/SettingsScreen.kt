@@ -457,7 +457,7 @@ fun SettingsScreen(
                     )
 
                     SettingRow(
-                        icon = BmpIcons.Teddy,
+                        icon = BmpIcons.Crib,
                         plateFill = tints.lemon.fill,
                         plateGlyph = tints.lemon.glyph,
                         label = deviceName,
@@ -577,7 +577,7 @@ fun SettingsScreen(
             // both detectors, so a nursery on a noisy street could not have calm sound and
             // alert movement — and the two thresholds do not even mean the same thing: one
             // is a fraction of the frame, the other is loudness.
-            SectionCard(title = "Movement alerts", icon = BmpIcons.Teddy) {
+            SectionCard(title = "Movement alerts", icon = BmpIcons.Crib) {
                 // What the setting is actually doing, before the control that sets it.
                 // "Sensitivity" means nothing on its own: this says what is being measured,
                 // and — the part that decides whether a parent trusts it — what it cannot do.
@@ -754,7 +754,7 @@ fun SettingsScreen(
 
                 if (supportsNotifications) {
                     SwitchRow(
-                        icon = BmpIcons.Teddy,
+                        icon = BmpIcons.Crib,
                         plateFill = tints.sky.fill,
                         plateGlyph = tints.sky.glyph,
                         label = "Movement notifications",

@@ -62,6 +62,7 @@ import com.hazemafaneh.babymonitorpro.core.CameraEndpoint
 import com.hazemafaneh.babymonitorpro.core.PairingUri
 import com.hazemafaneh.babymonitorpro.core.isLinkLocalIpv4
 import com.hazemafaneh.babymonitorpro.client.CameraProbe
+import com.hazemafaneh.babymonitorpro.discovery.Lan
 import com.hazemafaneh.babymonitorpro.discovery.Tailnet
 import com.hazemafaneh.babymonitorpro.discovery.allLocalIpv4Addresses
 import com.hazemafaneh.babymonitorpro.discovery.createBrowser
@@ -81,6 +82,7 @@ import com.hazemafaneh.babymonitorpro.ui.icons.BmpIcons
 import com.hazemafaneh.babymonitorpro.ui.theme.BmpTheme
 import com.hazemafaneh.babymonitorpro.ui.theme.Space
 import com.hazemafaneh.babymonitorpro.ui.theme.Touch
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import org.koin.compose.koinInject
 
@@ -117,6 +119,20 @@ fun FindCameraScreen(
     var discoveryRound by remember { mutableStateOf(0) }
     val browser = remember(discoveryRound) { createBrowser() }
 
+    // Pressing Search again used to look broken, and for a good reason: the round tears the
+    // browser down and builds a new one, so the results went to nothing and the card fell
+    // back to "Still looking around" before the same cameras reappeared a second later. The
+    // button read as the thing that had lost them. Two states fix it — a window during which
+    // the card says it is searching, and the previous results held on screen for the length
+    // of that window rather than blinking out and back.
+    var searching by remember { mutableStateOf(false) }
+    LaunchedEffect(discoveryRound) {
+        if (discoveryRound == 0) return@LaunchedEffect
+        searching = true
+        delay(SEARCH_FEEDBACK_MILLIS)
+        searching = false
+    }
+
     // Tailscale, and any other VPN that carries no multicast.
     //
     // mDNS cannot reach a tailnet at all — it is a mesh of point-to-point tunnels, and
@@ -125,10 +141,42 @@ fun FindCameraScreen(
     // bounded probe of the neighbouring tailnet addresses on this app's own port. It runs
     // only when this device actually holds a 100.64.0.0/10 address, so a phone with no VPN
     // never sends a packet it did not before.
+    // Found by asking rather than by listening. mDNS stays the first route — it is instant
+    // where it works and costs one multicast query — but it is not dependable enough to be
+    // the only one, so the same streaming probe the tailnet uses runs over the LAN too and
+    // the two sets of results are merged.
+    var probedLocal by remember(discoveryRound) { mutableStateOf<List<CameraEndpoint>>(emptyList()) }
+    var localProbing by remember(discoveryRound) { mutableStateOf(false) }
+
     var tailnetCameras by remember(discoveryRound) { mutableStateOf<List<CameraEndpoint>>(emptyList()) }
     var tailnetScanning by remember(discoveryRound) { mutableStateOf(false) }
     val ownAddresses = remember(discoveryRound) { allLocalIpv4Addresses() }
     val onTailnet = remember(ownAddresses) { ownAddresses.any(Tailnet::isTailnetAddress) }
+
+    LaunchedEffect(discoveryRound) {
+        val candidates = Lan.candidates(
+            ownAddresses = ownAddresses,
+            // Where a camera has actually been reached on this network before.
+            knownHosts = settings.recentCameras.map { it.host },
+        )
+        if (candidates.isEmpty()) return@LaunchedEffect
+        localProbing = true
+        val probe = CameraProbe()
+        try {
+            probedLocal = probe.probe(
+                hosts = candidates,
+                ports = listOf(settings.port, Bmp.DEFAULT_PORT, Bmp.LEGACY_PORT),
+                onFound = { found ->
+                    if (probedLocal.none { it.host == found.host }) {
+                        probedLocal = probedLocal + found
+                    }
+                },
+            )
+        } finally {
+            probe.close()
+            localProbing = false
+        }
+    }
 
     LaunchedEffect(discoveryRound, onTailnet) {
         if (!onTailnet) return@LaunchedEffect
@@ -141,14 +189,34 @@ fun FindCameraScreen(
         if (candidates.isEmpty()) return@LaunchedEffect
         tailnetScanning = true
         val probe = CameraProbe()
+        val ports = listOf(settings.port, Bmp.DEFAULT_PORT, Bmp.LEGACY_PORT)
+        val record: (CameraEndpoint) -> Unit = { found ->
+            if (tailnetCameras.none { it.host == found.host }) {
+                tailnetCameras = tailnetCameras + found
+            }
+        }
         try {
+            // The hosts that have answered before, on their own and with room to resolve a
+            // name and bring a tunnel up. A few seconds spent here is why the camera appears
+            // before the sweep rather than after it.
+            probe.probe(
+                hosts = Tailnet.known(settings.recentCameras.map { it.host }),
+                ports = ports,
+                timeoutMillis = probe.knownHostTimeoutMillis,
+                onFound = record,
+            )
             // The port the camera settings on *this* device use, because a household that
             // moved the port moved it everywhere.
-            tailnetCameras = probe.probe(
+            // Then the blocks. This device's port first, then the default, then the port
+            // older builds used — a household mid-upgrade has one of each.
+            probe.probe(
                 hosts = candidates,
-                // This device's port first, then the default, then the port older builds
-                // used — a household mid-upgrade has one of each.
-                ports = listOf(settings.port, Bmp.DEFAULT_PORT, Bmp.LEGACY_PORT),
+                ports = ports,
+                // Shown the moment one answers rather than when the sweep ends. The rest of
+                // the list is several hundred addresses nobody lives at, each costing its full
+                // deadline, so returning only at the end left a camera that was up, reachable
+                // and answering sitting behind a minute and a half of other people's silence.
+                onFound = record,
             )
         } finally {
             probe.close()
@@ -170,10 +238,23 @@ fun FindCameraScreen(
     // Recomputed when the announcements change rather than on every recomposition:
     // enumerating interfaces is a syscall, and a new list is the only thing that can change
     // the answer.
-    val discovered = remember(announced) {
+    val discovered = remember(announced, probedLocal) {
         val own = ownLanAddresses()
-        announced.filterNot { it.host in own || isLinkLocalIpv4(it.host) }
+        // Announced first, because an announcement carries the name the camera chose for
+        // itself; a probe only learns that name by asking, and asks later.
+        (announced + probedLocal)
+            .filterNot { it.host in own || isLinkLocalIpv4(it.host) }
+            .distinctBy { it.host }
     }
+
+    // Survives one round, and only while that round is running: a camera that has genuinely
+    // gone off the air disappears from the list as soon as the sweep is over, which is the
+    // one thing this card must not lie about.
+    var lastResults by remember { mutableStateOf<List<CameraEndpoint>>(emptyList()) }
+    LaunchedEffect(discovered) {
+        if (discovered.isNotEmpty()) lastResults = discovered
+    }
+    val onScreen = if (discovered.isEmpty() && searching) lastResults else discovered
 
     DisposableEffect(browser) {
         browser?.start()
@@ -280,10 +361,16 @@ fun FindCameraScreen(
             DiscoveryCard(
                 meta = when {
                     discoveryImpossible -> "not available here"
-                    discovered.isEmpty() -> "mDNS · local only"
-                    discovered.size == 1 -> "1 found"
-                    else -> "${discovered.size} found"
+                    searching || localProbing -> "searching…"
+                    onScreen.isEmpty() -> "mDNS · local only"
+                    onScreen.size == 1 -> "1 found"
+                    else -> "${onScreen.size} found"
                 },
+                searching = searching || localProbing,
+                // Where the remote lands on this screen. Only this card claims it: two
+                // controls both asking for initial focus is a race, and the second card is
+                // not even present on most devices.
+                focusFirst = true,
                 // Nothing to search again with in a browser, so the control is simply absent
                 // there rather than present and dead.
                 onRefresh = if (discoveryImpossible) null else {
@@ -300,15 +387,19 @@ fun FindCameraScreen(
                             "Type the address the camera screen shows.",
                     )
 
-                    discovered.isEmpty() -> EmptyNote(
+                    onScreen.isEmpty() -> EmptyNote(
                         icon = BmpIcons.House,
-                        title = "Still looking around",
+                        title = if (searching || localProbing) {
+                            "Searching your network"
+                        } else {
+                            "Still looking around"
+                        },
                         note = "Open BabyMonitor Pro on the phone you're leaving in the " +
                             "nursery and tap Use this device as Camera.",
                     )
 
                     else -> Column(verticalArrangement = Arrangement.spacedBy(ROW_GAP)) {
-                        discovered.forEachIndexed { index, camera ->
+                        onScreen.forEachIndexed { index, camera ->
                             // The row is the action. One result should be one obvious tap,
                             // not an address to read and a Connect button to find.
                             DiscoveredRow(
@@ -329,19 +420,27 @@ fun FindCameraScreen(
                 Spacer(Modifier.height(Space.sm))
                 DiscoveryCard(
                     meta = when {
-                        tailnetScanning -> "scanning…"
-                        tailnetCameras.isEmpty() -> "tailnet · none found"
+                        // The count leads even while the sweep runs: something found is the
+                        // answer to the parent's question, and "scanning…" over a list of
+                        // cameras reads as though the list is not to be trusted yet.
                         tailnetCameras.size == 1 -> "1 found"
-                        else -> "${tailnetCameras.size} found"
+                        tailnetCameras.size > 1 -> "${tailnetCameras.size} found"
+                        tailnetScanning -> "scanning…"
+                        else -> "tailnet · none found"
                     },
                     title = "Over Tailscale",
+                    searching = tailnetScanning,
                     onRefresh = { discoveryRound++ },
                 ) {
                     when {
-                        tailnetScanning -> EmptyNote(
+                        // Results first, even mid-sweep. The rows arrive as they answer.
+                        tailnetCameras.isEmpty() && tailnetScanning -> EmptyNote(
                             title = "Asking your tailnet",
-                            note = "Checking the addresses next to this device for a camera. " +
-                                "This takes a few seconds.",
+                            // Honest about the shape of it: a camera that is there answers
+                            // almost at once and appears the moment it does, while the rest
+                            // of the sweep goes on knocking on empty addresses for a while.
+                            note = "A camera that is on shows up here within a second or two. " +
+                                "The sweep keeps looking for a minute after that.",
                         )
 
                         tailnetCameras.isEmpty() -> EmptyNote(
@@ -494,6 +593,8 @@ private fun DiscoveryCard(
     meta: String,
     onRefresh: (() -> Unit)?,
     title: String = "On this network",
+    searching: Boolean = false,
+    focusFirst: Boolean = false,
     content: @Composable () -> Unit,
 ) {
     Surface(
@@ -503,16 +604,22 @@ private fun DiscoveryCard(
         border = BorderStroke(CARD_BORDER, MaterialTheme.colorScheme.outlineVariant),
     ) {
         Column(Modifier.padding(Space.lg)) {
+            // The label above its meta, not beside it.
+            //
+            // All three sat on one line with `SpaceBetween` and no minimum gap, and on a
+            // phone there is not room: "ON THIS NETWORK" ran straight into "mDNS · local
+            // only" with no space between them, so the two read as one broken word. Stacking
+            // them costs one line of a card that has plenty and cannot collide at any width.
             Row(
                 Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                SectionLabel(title)
-                Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    SectionLabel(title)
                     // How the search works, stated rather than implied. A parent who wonders
-                    // whether this app is scanning the internet gets the answer in the corner
-                    // of the card doing the scanning.
+                    // whether this app is scanning the internet gets the answer on the card
+                    // doing the scanning.
                     Text(
                         text = meta,
                         style = MaterialTheme.typography.labelMedium.copy(
@@ -520,11 +627,16 @@ private fun DiscoveryCard(
                             fontSize = META_TEXT,
                         ),
                         color = MaterialTheme.colorScheme.outline,
+                        maxLines = 1,
                     )
-                    if (onRefresh != null) {
-                        Spacer(Modifier.width(Space.xs))
-                        RefreshButton(onRefresh)
-                    }
+                }
+                if (onRefresh != null) {
+                    Spacer(Modifier.width(Space.sm))
+                    RefreshButton(
+                        onClick = onRefresh,
+                        searching = searching,
+                        focusFirst = focusFirst,
+                    )
                 }
             }
             Spacer(Modifier.height(Space.sm))
@@ -547,7 +659,11 @@ private fun DiscoveryCard(
  * and there is no pull-to-refresh on a device with no touchscreen.
  */
 @Composable
-private fun RefreshButton(onClick: () -> Unit) {
+private fun RefreshButton(
+    onClick: () -> Unit,
+    searching: Boolean,
+    focusFirst: Boolean,
+) {
     Surface(
         modifier = Modifier
             .heightIn(min = Touch.min)
@@ -555,21 +671,25 @@ private fun RefreshButton(onClick: () -> Unit) {
             // matters, and one press down from it is the list of cameras — so the first
             // thing the D-pad does is either open a camera or search again, which are the
             // only two things this screen is for.
-            .initialFocus()
+            .then(if (focusFirst) Modifier.initialFocus() else Modifier)
             .pressable(onClick = onClick, focusShape = MaterialTheme.shapes.extraLarge),
         shape = MaterialTheme.shapes.extraLarge,
         color = MaterialTheme.colorScheme.surface,
         border = BorderStroke(CARD_BORDER, MaterialTheme.colorScheme.outlineVariant),
     ) {
         Row(
-            Modifier.padding(horizontal = Space.sm),
+            Modifier.padding(horizontal = Space.md),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Text(
-                text = "Search again",
+                // Never wrapped. Two words in a pill broke across two lines on a phone and
+                // turned a control into a lozenge twice the height of everything beside it.
+                text = if (searching) "Searching…" else "Search again",
                 style = MaterialTheme.typography.labelLarge.copy(fontSize = ACTION_TEXT),
                 fontWeight = FontWeight.Bold,
                 color = MaterialTheme.colorScheme.secondary,
+                maxLines = 1,
+                softWrap = false,
             )
         }
     }
@@ -648,7 +768,7 @@ private fun DiscoveredRow(
             // Same teddy the camera screen shows for itself. This is the one row in the
             // app a parent taps without reading, and the mark is what they aim at.
             IconPlate(
-                icon = BmpIcons.Teddy,
+                icon = BmpIcons.Crib,
                 fill = MaterialTheme.colorScheme.surface,
                 contentColor = if (highlighted) lemon.glyph else MaterialTheme.colorScheme.onSurfaceVariant,
                 size = PlateSize.row,
@@ -897,6 +1017,15 @@ private fun parseAddress(input: String): PairingUri.Parsed? =
         ?: PairingUri.parseHostPort(input)?.let { (host, port) ->
             PairingUri.Parsed(host, port)
         }
+
+/**
+ * How long the card says it is searching after the button is pressed.
+ *
+ * mDNS answers arrive in the first second on a quiet network and can take two on a busy one,
+ * so this is long enough to cover a real sweep and short enough that it never sits there
+ * claiming to search a network it has already finished with.
+ */
+private const val SEARCH_FEEDBACK_MILLIS = 2_500L
 
 private val TITLE_TEXT = 21.sp
 private val ACTION_TEXT = 13.sp
